@@ -1,0 +1,23 @@
+@if (Percent is { } percent)
+{
+    <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@percent">
+        <span style="width: @($"{Math.Clamp(percent, 0, 100):F1}%")"></span>
+    </div>
+}
+else
+{
+    <div class="progress-bar progress-bar--indeterminate" role="progressbar" aria-label="In progress"><span></span></div>
+}
+
+@if (!string.IsNullOrWhiteSpace(Label))
+{
+    <small class="progress-bar__label">@Label</small>
+}
+
+@code {
+    [Parameter]
+    public double? Percent { get; set; }
+
+    [Parameter]
+    public string? Label { get; set; }
+}

@@ -1,0 +1,29 @@
+@inherits LayoutComponentBase
+
+<div class="app-shell">
+    <aside class="app-sidebar">
+        <a class="brand" href="/" aria-label="SIQS home">
+            <svg class="brand__glyph" viewBox="0 0 32 32" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M24 5H10l8 11-8 11h14M8 5h16M8 27h16" />
+            </svg>
+            <span class="brand__copy"><strong>SIQS</strong><small>quadratic sieve workbench</small></span>
+        </a>
+
+        <NavMenu />
+
+        <div class="sidebar-bottom">
+            <ThemeToggle />
+            <LiveStatusFooter />
+        </div>
+    </aside>
+
+    <main class="app-content">
+        @Body
+    </main>
+</div>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>

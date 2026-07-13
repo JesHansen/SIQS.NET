@@ -1,0 +1,29 @@
+# Build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+
+# Rider / VS
+.idea/
+.vs/
+
+# Test results
+TestResults/
+*.trx
+
+# Run workspaces produced by the pipeline/UI
+runs/
+
+# Published distributed sieve client served for download by the UI
+SIQS.UI/download/
+
+# Local scratch
+.tmp/
+
+# Disposable generated local performance spy suite
+SIQS.Pipeline.Tests/GeneratedPerformanceSpyTests.cs
+
+# BenchmarkDotNet generated reports
+BenchmarkDotNet.Artifacts/

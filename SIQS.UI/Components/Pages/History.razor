@@ -1,0 +1,109 @@
+@page "/history"
+
+<PageTitle>History · SIQS</PageTitle>
+
+<header class="page-head">
+    <SectionIcon Name="history" />
+    <div>
+        <h1>History</h1>
+        <p>The ideas and people behind the quadratic sieve.</p>
+    </div>
+</header>
+
+<section class="history-timeline">
+    <article class="history-entry">
+        <Portrait Src="/img/history/fermat.jpg" Alt="Pierre de Fermat engraving"
+                  Credit="Engraving by François de Poilly — public domain, via Wikimedia Commons" Initials="PF" Hue="210" />
+        <div>
+            <h2>1600s — Fermat's difference of squares</h2>
+            <p>Pierre de Fermat factored numbers by writing N = X<sup>2</sup> − Y<sup>2</sup> = (X−Y)(X+Y). It works
+                well only when factors are close together, but the identity x<sup>2</sup> ≡ y<sup>2</sup> (mod N) behind
+                it powers every modern sieve.</p>
+            </div>
+        </article>
+        <article class="history-entry">
+            <Portrait Src="/img/history/kraitchik-icm-1932.jpg" Alt="Maurice Kraitchik with colleagues at the 1932 ICM"
+                      Credit="Maurice Kraitchik — back row, just right of centre, facing left — with colleagues at the International Congress of Mathematicians, Zürich 1932. Photo: Johannes Meiner, ICM Zürich 1932 (ETH-Bibliothek) — public domain, via Wikimedia Commons"
+                      Initials="MK" Hue="275" Scene="true" />
+            <div>
+                <h2>1920s — Kraitchik's congruences</h2>
+                <p>Maurice Kraitchik relaxed Fermat's idea: instead of an exact difference of squares, combine many small
+                    congruences x<sup>2</sup> ≡ residue (mod N) and multiply subsets into squares.</p>
+                </div>
+            </article>
+            <article class="history-entry">
+                <Portrait Alt="Michael Morrison and John Brillhart" Initials="MB" Hue="35" />
+                <div>
+                    <h2>1970 — CFRAC breaks F₇</h2>
+                    <p>Michael Morrison and John Brillhart used the continued-fraction method to factor the seventh Fermat
+                        number F₇ = 2¹²⁸ + 1 (39 digits), the landmark machine-factorization of its era and the template of
+                        “relations + linear algebra”.</p>
+                    </div>
+                </article>
+                <article class="history-entry">
+                    <Portrait Alt="John Dixon" Initials="JD" Hue="110" />
+                    <div>
+                        <h2>1975/1981 — Dixon's random squares</h2>
+                        <p>John Dixon's method — pick random x, keep the smooth x<sup>2</sup> mod N — gave the first rigorous
+                            runtime analysis for this family of algorithms.</p>
+                        </div>
+                    </article>
+                    <article class="history-entry">
+                        <Portrait Src="/img/history/pomerance.jpg" Alt="Carl Pomerance at a whiteboard"
+                                  Credit="Photo: Eli Burakian / Dartmouth College, 2019" Initials="CP" Hue="190" Scene="true" />
+                        <div>
+                            <h2>1981–82 — Pomerance invents the quadratic sieve</h2>
+                            <p>Carl Pomerance replaced random values with the polynomial x<sup>2</sup> − N sieved over an interval,
+                                letting one addition of log p replace trial division. QS became the fastest general-purpose method of
+                                the 1980s–early 1990s.</p>
+                            </div>
+                        </article>
+                        <article class="history-entry">
+                            <Portrait Src="/img/history/montgomery.jpg" Alt="Peter Montgomery"
+                                      Credit="Photo: Dcoetzee — CC0, via Wikimedia Commons" Initials="PM" Hue="320" />
+                            <div>
+                                <h2>1980s — MPQS and the record chase</h2>
+                                <p>Variants with many polynomials (multiple-polynomial QS, with key contributions by Peter Montgomery;
+                                    large-prime variations; later the self-initializing variant SIQS used by this app) plus distributed
+                                    volunteers pushed records past 100 digits.</p>
+                                </div>
+                            </article>
+                            <article class="history-entry">
+                                <Portrait Src="/img/history/lenstra.jpg" Alt="Arjen Lenstra"
+                                          Credit="Photo: Rama — CC BY-SA 2.0 FR, via Wikimedia Commons" Initials="AL" Hue="15" />
+                                <div>
+                                    <h2>1994 — RSA-129 and the squeamish ossifrage</h2>
+                                    <p>The 129-digit RSA challenge number from Martin Gardner's 1977 Scientific American column fell to a QS
+                                        effort led by Derek Atkins, Michael Graff, Arjen Lenstra and Paul Leyland, with about 600 volunteers
+                                        contributing idle machine time over eight months — decoding “THE MAGIC WORDS ARE SQUEAMISH OSSIFRAGE”.
+                                    </p>
+                                </div>
+                            </article>
+                            <article class="history-entry">
+                                <Medallion Initials="GN" Hue="230" />
+                                <div>
+                                    <h2>Mid-1990s — the number field sieve takes over</h2>
+                                    <p>For numbers beyond roughly 100–110 digits the general number field sieve (GNFS) is asymptotically faster;
+                                        RSA-129 was QS's high-water mark. QS remains the algorithm of choice in the double-digit-to-~100-digit
+                                        range — exactly this app's territory.</p>
+                                        <p><a href="/learn">Learn the method</a> · <a href="/factorize">Factor a number</a></p>
+                                    </div>
+                                </article>
+                            </section>
+
+                            <details class="panel history-credits">
+                                <summary>Image credits</summary>
+                                <ul>
+                                    <li><a href="https://commons.wikimedia.org/wiki/File:Pierre_de_Fermat_(F._Poilly).jpg">Engraving by François de
+                                        Poilly — public domain, via Wikimedia Commons</a></li>
+                                        <li><a
+                                            href="https://commons.wikimedia.org/wiki/File:Picone_Franel_Dandliker_Kraitchik_Kollros_Wolff_Straszewicz_Zurich1932.tif">Photo:
+                                            Johannes Meiner, ICM Zürich 1932 (ETH-Bibliothek) — public domain, via Wikimedia Commons</a></li>
+                                            <li><a href="https://home.dartmouth.edu/news/2019/04/big-bang-theory-takes-math-notes-carl-pomerance">Photo: Eli
+                                                Burakian / Dartmouth College, 2019</a></li>
+                                                <li><a href="https://commons.wikimedia.org/wiki/File:Peter_Montgomery.jpg">Photo: Dcoetzee — CC0, via Wikimedia
+                                                    Commons</a></li>
+                                                    <li><a href="https://commons.wikimedia.org/wiki/File:Arjen_Lenstra-IMG_8901.jpg">Photo: Rama — CC BY-SA 2.0 FR,
+                                                        via Wikimedia Commons</a></li>
+                                                    </ul>
+                                                </details>

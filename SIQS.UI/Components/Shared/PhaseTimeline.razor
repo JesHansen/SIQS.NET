@@ -1,0 +1,39 @@
+<div class="phase-timeline @(Compact ? "phase-timeline--compact" : string.Empty)">
+    @foreach (var item in Items)
+    {
+        <div class="phase-timeline__item phase-timeline__item--@StatusPresentation.CssClass(item.Status)">
+            <span class="phase-timeline__node">@((MarkupString)Glyph(item.Status))</span>
+            <div class="phase-timeline__content">
+                <strong>@StatusPresentation.DisplayName(item.Phase)</strong>
+                @if (!Compact && item.Status == PhaseStatus.Running)
+                {
+                    <ProgressBar Percent="item.Percent" Label="item.Detail" />
+                }
+                else if (!Compact && item.Status == PhaseStatus.Completed)
+                {
+                    <small>@StatusPresentation.FormatElapsed(item.ElapsedSeconds)</small>
+                }
+                else if (!Compact && !string.IsNullOrWhiteSpace(item.Detail))
+                {
+                    <small>@item.Detail</small>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public IReadOnlyList<PhaseTimelineItem> Items { get; set; } = Array.Empty<PhaseTimelineItem>();
+
+    [Parameter]
+    public bool Compact { get; set; }
+
+    private static string Glyph(PhaseStatus status) => status switch
+    {
+        PhaseStatus.Completed => "<svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"m3 8 3 3 7-7\"/></svg>",
+        PhaseStatus.Failed or PhaseStatus.Canceled => "<svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"m4 4 8 8M12 4l-8 8\"/></svg>",
+        PhaseStatus.Skipped => "<svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"M4 8h8\"/></svg>",
+        _ => string.Empty,
+    };
+}

@@ -1,0 +1,23 @@
+@if (Src is { } source)
+{
+    <figure class="portrait @(Scene ? "portrait--scene" : string.Empty)">
+        <img src="@source" alt="@Alt" />
+        @if (Credit is { } credit)
+        {
+            <figcaption>@credit</figcaption>
+        }
+    </figure>
+}
+else
+{
+    <Medallion Initials="@Initials" Hue="@Hue" />
+}
+
+@code {
+    [Parameter] public string? Src { get; set; }
+    [Parameter, EditorRequired] public string Alt { get; set; } = string.Empty;
+    [Parameter] public string? Credit { get; set; }
+    [Parameter, EditorRequired] public string Initials { get; set; } = string.Empty;
+    [Parameter] public int Hue { get; set; }
+    [Parameter] public bool Scene { get; set; }
+}

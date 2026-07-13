@@ -1,0 +1,253 @@
+@page "/distributed"
+@rendermode InteractiveServer
+@implements IDisposable
+@using System.Numerics
+@using SIQS.Overlord
+@inject OverlordService Overlord
+@inject NavigationManager Nav
+
+<PageTitle>SIQS Distributed Factorization</PageTitle>
+
+<header class="page-head">
+    <SectionIcon Name="distributed" />
+    <div>
+        <h1>Distributed</h1>
+        <p>Fan the sieving work out to your other machines.</p>
+    </div>
+</header>
+
+<div class="console">
+    <section class="panel run-form">
+        <h2>Request a composite (admin)</h2>
+        <label class="field">
+            <span>Target N</span>
+            <input @bind="_n" placeholder="composite integer" />
+        </label>
+
+        <details>
+            <summary>Advanced parameters</summary>
+            <div class="grid">
+                <label class="field"><span>Factor base bound</span><input @bind="_bound" placeholder="auto" /></label>
+                <label class="field"><span>Multiplier</span><input @bind="_multiplier" placeholder="auto" /></label>
+                <label class="field"><span>Sieve half interval</span><input @bind="_halfInterval"
+                                                                                placeholder="auto" /></label>
+                    <label class="field"><span>Relation target</span><input @bind="_relationTarget"
+                                                                                placeholder="auto" /></label>
+                        <label class="field"><span>A prime count</span><input @bind="_aPrimeCount" placeholder="auto" /></label>
+                        <label class="field"><span>A prime window</span><input @bind="_aPrimeWindow"
+                                                                                   placeholder="auto" /></label>
+                            <label class="field"><span>Error margin</span><input @bind="_errorMargin" placeholder="auto" /></label>
+                            <label class="field"><span>Polynomial count</span><input @bind="_polynomialCount"
+                                                                                         placeholder="auto" /></label>
+                            </div>
+                        </details>
+
+                        <div class="actions">
+                            <button class="primary" @onclick="Submit" disabled="@Overlord.IsBusy">Request factorization</button>
+                        </div>
+
+                        @if (_errors.Count > 0)
+                        {
+                            <ul class="errors">
+                                @foreach (var error in _errors)
+                                {
+                                    <li>@error</li>
+                                }
+                            </ul>
+                        }
+                    </section>
+
+                    <section class="panel status">
+                        <h2>Sieve pool</h2>
+                        @if (Overlord.Snapshot() is { } job)
+                        {
+                            <div class="job-head">
+                                <code>@job.JobId</code>
+                                <span class="kind-chip">@PhaseText(job.Phase)</span>
+                                <span>N = <code class="ntrunc">@job.TargetN</code></span>
+                            </div>
+
+                            <div class="distributed-phases" aria-label="Distributed job phase">
+                                @foreach (var phase in Enum.GetValues<OverlordPhase>().Where(phase => phase != OverlordPhase.Faulted))
+                                {
+                                    <span class="@PhaseClass(phase, job.Phase)">@PhaseText(phase)</span>
+                                }
+                            </div>
+                            <ProgressBar Percent="Percent(job)"
+                                         Label="@($"{job.UsableRelations} usable / {job.RelationTarget} target relations")" />
+
+                            @if (job.Phase == OverlordPhase.Completed)
+                            {
+                                <div class="result @(job.Factors.Any ? "found" : "none")">
+                                    @if (job.Factors.Any)
+                                    {
+                                        <strong>Factors found:</strong> <span>@job.Factors</span>
+                                    }
+                                    else
+                                    {
+                                        <strong>No non-trivial factor found.</strong>
+                                    }
+                                    <a href="@($"/jobs/{job.JobId}")">details</a>
+                                </div>
+                            }
+
+                            @if (job.Leases is { } leases)
+                            {
+                                <table class="phases">
+                                    <thead>
+                                        <tr>
+                                            <th>A-candidates</th>
+                                            <th>Assigned</th>
+                                            <th>Completed</th>
+                                            <th>Outstanding leases</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td>@leases.ACount</td>
+                                            <td>@leases.Assigned</td>
+                                            <td>@leases.Completed</td>
+                                            <td>@leases.Outstanding</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            }
+
+                            @if (!string.IsNullOrEmpty(job.Error))
+                            {
+                                <div class="result none"><strong>Failed:</strong> @job.Error</div>
+                            }
+                        }
+                        else
+                        {
+                            <p class="muted">No distributed job is active.</p>
+                        }
+                    </section>
+
+                    <section class="panel participate-panel">
+                        <svg class="network-illustration" viewBox="0 0 240 100" aria-hidden="true" fill="none" stroke="currentColor"
+                             stroke-width="2">
+                            <path d="M120 50 42 22M120 50l78-28M120 50 42 78M120 50l78 28" />
+                            <circle cx="120" cy="50" r="14" />
+                            <circle cx="35" cy="20" r="8" />
+                            <circle cx="205" cy="20" r="8" />
+                            <circle cx="35" cy="80" r="8" />
+                            <circle cx="205" cy="80" r="8" />
+                        </svg>
+                        <div>
+                            <h2>Participate</h2>
+                            <p>Download the client, then run it in a terminal pointed at this server:</p>
+                            <p><a class="primary" href="/api/dist/client/windows-x64" download>Download sieve client (Windows x64)</a></p>
+                            <pre class="cmd">qs-sieve-client.exe @ServerBase</pre>
+                            <p><a class="primary" href="/api/dist/client/linux-x64" download>Download sieve client (Linux x64)</a></p>
+                            <pre class="cmd">chmod +x qs-sieve-client
+./qs-sieve-client @ServerBase</pre>
+                            <p class="muted">
+                                The client verifies it agrees with the server on formats, builds the factor base locally, then
+                                repeatedly leases an interval, sieves it, and uploads the relations it finds. No account needed.
+                            </p>
+                        </div>
+                    </section>
+                </div>
+
+@code {
+    private string _n = string.Empty;
+    private string _bound = string.Empty;
+    private string _multiplier = string.Empty;
+    private string _halfInterval = string.Empty;
+    private string _relationTarget = string.Empty;
+    private string _aPrimeCount = string.Empty;
+    private string _aPrimeWindow = string.Empty;
+    private string _errorMargin = string.Empty;
+    private string _polynomialCount = string.Empty;
+
+    private IReadOnlyList<string> _errors = Array.Empty<string>();
+    private Timer? _throttle;
+    private volatile bool _dirty;
+
+    private string ServerBase => Nav.BaseUri.TrimEnd('/');
+
+    protected override void OnInitialized()
+    {
+        Overlord.Changed += OnChanged;
+        _throttle = new Timer(_ => Flush(), null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
+    }
+
+    private void Submit()
+    {
+        var errors = new List<string>();
+        BigInteger n = default;
+        if (string.IsNullOrWhiteSpace(_n) || !BigInteger.TryParse(_n.Trim(), out n))
+        {
+            errors.Add("Target N must be an integer.");
+        }
+
+        if (errors.Count == 0)
+        {
+            try
+            {
+                Overlord.Submit(new FactorizationRequest(n)
+                {
+                    FactorBase = new FactorBaseRunOptions
+                    {
+                        Bound = ParseLong(_bound),
+                        Multiplier = string.IsNullOrWhiteSpace(_multiplier) ? null : BigInteger.Parse(_multiplier.Trim()),
+                    },
+                    Sieving = new SievingRunOptions
+                    {
+                        HalfInterval = ParseLong(_halfInterval),
+                        RelationTarget = ParseInt(_relationTarget),
+                        APrimeCount = ParseInt(_aPrimeCount),
+                        APrimeWindowSize = ParseInt(_aPrimeWindow),
+                        ErrorMargin = ParseInt(_errorMargin),
+                        PolynomialCount = ParseLong(_polynomialCount),
+                    },
+                });
+            }
+            catch (Exception ex)
+            {
+                errors.Add(ex.Message);
+            }
+        }
+
+        _errors = errors;
+    }
+
+    private static long? ParseLong(string value) => long.TryParse(value?.Trim(), out var v) ? v : null;
+    private static int? ParseInt(string value) => int.TryParse(value?.Trim(), out var v) ? v : null;
+
+    private static int Percent(OverlordJobSnapshot job)
+        => job.RelationTarget <= 0 ? 0 : (int)Math.Clamp(100L * job.UsableRelations / job.RelationTarget, 0, 100);
+
+    private static string PhaseText(OverlordPhase phase) => phase switch
+    {
+        OverlordPhase.Preparing => "preparing",
+        OverlordPhase.Sieving => "sieving",
+        OverlordPhase.Finishing => "finishing (filtering / linalg / sqrt)",
+        OverlordPhase.Completed => "completed",
+        OverlordPhase.Faulted => "faulted",
+        _ => phase.ToString(),
+    };
+
+    private static string PhaseClass(OverlordPhase phase, OverlordPhase current)
+        => phase == current ? "current" : phase < current ? "complete" : string.Empty;
+
+    private void OnChanged() => _dirty = true;
+
+    private void Flush()
+    {
+        if (!_dirty)
+        {
+            return;
+        }
+
+        _dirty = false;
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Overlord.Changed -= OnChanged;
+        _throttle?.Dispose();
+    }
+}

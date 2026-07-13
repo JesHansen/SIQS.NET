@@ -1,0 +1,131 @@
+@page "/learn/walkthrough"
+@rendermode InteractiveServer
+
+<PageTitle>The Guided Tour · Sieve School</PageTitle>
+
+<header class="page-head">
+    <SectionIcon Name="tour" />
+    <div>
+        <h1>The guided tour</h1>
+        <p>A worked quadratic-sieve factorization of 15347 = 103 × 149.</p>
+    </div>
+</header>
+
+<section class="panel walkthrough" tabindex="0" @onkeydown="KeyStep">
+    <p class="walkthrough__kicker">@Slides[_index].Kicker</p>
+    <h2>@Slides[_index].Title</h2>
+    @switch (_index)
+    {
+        case 0:
+            <p>Multiplying 103 × 149 is instant; recovering 103 and 149 from 15347 is the hard direction. RSA relies on
+                exactly this asymmetry.</p>
+                <p class="formula">103 × 149 → 15347</p>
+                break;
+        case 1:
+
+                    <p>If X<sup>2</sup> ≡ Y<sup>2</sup> (mod N) and X ≢ ±Y, then gcd(X − Y, N) is a nontrivial factor.
+                        Everything that follows finds such a pair.</p>
+                        <p class="formula">X<sup>2</sup> − Y<sup>2</sup> = (X − Y)(X + Y)</p>
+                        break;
+        case 2:
+
+                            <p>Collect many relations x<sup>2</sup> ≡ small product (mod N), then multiply a subset whose prime
+                                exponents are all even. That product is a square.</p>
+                                break;
+        case 3:
+
+                                    <p>For N = 15347 and bound 30, the usable primes are {2, 17, 23, 29}. A larger base finds smooth values more
+                                        easily, but grows the later matrix.</p>
+                                        break;
+        case 4:
+
+                                            <p>Use y(x) = (x + 124)<sup>2</sup> − 15347. Add log p at the positions where each prime divides y(x), just
+                                                like Eratosthenes.</p>
+                                                <SieveDemo />
+                                                break;
+        case 5:
+
+                                                    <table>
+                                                        <thead>
+                                                            <tr>
+                                                                <th>x</th>
+                                                                <th>x + 124</th>
+                                                                <th>y(x)</th>
+                                                                <th>factorization</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            <tr>
+                                                                <td>0</td>
+                                                                <td>124</td>
+                                                                <td>29</td>
+                                                                <td>29</td>
+                                                            </tr>
+                                                            <tr>
+                                                                <td>3</td>
+                                                                <td>127</td>
+                                                                <td>782</td>
+                                                                <td>2 · 17 · 23</td>
+                                                            </tr>
+                                                            <tr>
+                                                                <td>71</td>
+                                                                <td>195</td>
+                                                                <td>22678</td>
+                                                                <td>2 · 17 · 23 · 29</td>
+                                                            </tr>
+                                                        </tbody>
+                                                    </table>
+                                                    <p>Real runs also retain partial relations with one large leftover prime, then combine pairs later.</p>
+                                                    break;
+                                                case 6:
+
+                                                    <p>Filtering removes singletons, merges duplicates, and combines partials. The result is a smaller matrix
+                                                        where every remaining row has a chance to pair into a square.</p>
+                                                        break;
+        case 7:
+
+                                                            <p>Write prime exponents modulo 2: v₁ = (0,0,0,1), v₂ = (1,1,1,0), v₃ = (1,1,1,1). Here v₁ + v₂ + v₃ = 0, so
+                                                                all three relations make a square.</p>
+                                                                break;
+        case 8:
+
+                                                                    <p>X = 124 · 127 · 195 mod 15347 = 1460. Y = 2 · 17 · 23 · 29 ≡ 7331 (mod 15347). gcd(15347, 7331 − 1460) =
+                                                                        gcd(15347, 5871) = 103.</p>
+                                                                        <p class="formula">15347 / 103 = 149</p>
+                                                                        break;
+                                                                        default:
+
+<p>That is the quadratic sieve: choose a factor base, sieve for relations, filter, solve parity equations,
+                                                                            and take a gcd. The pipeline turns this compact story into a practical factorization.</p>
+                                                                            <p><a href="/history">Where did all this come from? → History</a></p>
+                                                                            break;
+                                                                        }
+                                                                        <div class="walkthrough__controls"><button type="button" @onclick="Back" disabled="@(_index == 0)">Back</button>
+                                                                            <div class="walkthrough__dots">@for (var index = 0; index < Slides.Length; index++) { var dot = index;
+                                                                                <button
+                                                                                type="button" class="@(dot == _index ? "active" : string.Empty)" @onclick="() => _index = dot"
+                                                                                aria-label="@($"Go to step {dot + 1}")"></button>
+                                                                            }
+                                                                        </div><button class="primary" type="button"
+                                                                                      @onclick="Next" disabled="@(_index == Slides.Length - 1)">Next</button>
+                                                                    </div>
+                                                                </section>
+
+@code {
+    private static readonly WalkthroughSlide[] Slides =
+    [
+        new("Why factoring is hard", "The problem"), new("Fermat's old trick", "The key identity"), new("Make squares from pieces", "Kraitchik's idea"), new("The factor base", "Pipeline stage 1"), new("Sieving", "Pipeline stage 2"),
+new("Relations", "The harvest"), new("Filtering", "Pipeline stage 3"), new("Linear algebra", "Pipeline stage 4"),
+new("Square root", "Pipeline stage 5"), new("The whole sieve", "Put it together"),
+    ];
+    private int _index;
+    private void Back() => _index--;
+    private void Next() => _index++;
+    private void KeyStep(KeyboardEventArgs args)
+    {
+        if (args.Key == "ArrowLeft" && _index > 0) { Back(); }
+        else if (args.Key
+== "ArrowRight" && _index < Slides.Length - 1) { Next(); }
+    }
+    private sealed record WalkthroughSlide(string Title, string Kicker);
+}

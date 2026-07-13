@@ -1,0 +1,154 @@
+@page "/jobs"
+@rendermode InteractiveServer
+@implements IDisposable
+@using SIQS.Overlord
+@inject JobCatalog Catalog
+@inject FactorizationJobService LocalJobs
+@inject OverlordService Overlord
+
+<PageTitle>Jobs · SIQS</PageTitle>
+
+<header class="page-head">
+    <SectionIcon Name="jobs" />
+    <div>
+        <h1>Jobs</h1>
+        <p>Every factorization on this server — live and archived.</p>
+    </div>
+</header>
+
+@if (LocalJobs.Current is { IsRunning: true } local)
+{
+    <a class="job-live-card" href="@($"/jobs/{local.JobId}")">
+        <div><strong><code>@local.JobId</code></strong><span class="kind-chip">one-shot</span><code class="ntrunc"
+                                                                                                        title="@local.TargetN">N = @local.TargetN</code></div>
+            <PhaseTimeline Items="local.Phases.Select(phase => phase.ToTimelineItem()).ToArray()" Compact="true" />
+        </a>
+    }
+    @if (Overlord.Snapshot() is { } distributed && Overlord.IsBusy)
+    {
+        <a class="job-live-card" href="@($"/jobs/{distributed.JobId}")">
+            <div><strong><code>@distributed.JobId</code></strong><span class="kind-chip">distributed</span><code class="ntrunc"
+                                                                                                                     title="@distributed.TargetN">N = @distributed.TargetN</code></div>
+                <ProgressBar Percent="RelationPercent(distributed)"
+                             Label="@($"{distributed.UsableRelations} usable / {distributed.RelationTarget} target relations")" />
+            </a>
+        }
+
+        <div class="job-filters panel">
+            <div class="filter-chips" role="group" aria-label="Job kind">
+                @foreach (var kind in Enum.GetValues<JobKindFilter>())
+                {
+                    <button class="@(_kind == kind ? "active" : string.Empty)" type="button"
+                            @onclick="() => _kind = kind">@KindFilterLabel(kind)</button>
+                }
+            </div>
+            <label> Status
+                <select @bind="_status">
+                    <option value="">All statuses</option>
+                    <option value="@JobStatus.CompletedFactorFound">Completed w/ factor</option>
+                    <option value="@JobStatus.CompletedNoFactor">No factor</option>
+                    <option value="@JobStatus.Failed">Failed</option>
+                    <option value="@JobStatus.Canceled">Canceled</option>
+                </select>
+            </label>
+        </div>
+
+        @if (FilteredEntries.Count == 0)
+        {
+            <section class="panel empty-state">
+                <p>No jobs yet — <a href="/factorize">run your first factorization</a>.</p>
+            </section>
+        }
+        else
+        {
+            <section class="panel">
+                <table class="job-table">
+                    <thead>
+                        <tr>
+                            <th>Job</th>
+                            <th>Kind</th>
+                            <th>N</th>
+                            <th>Status</th>
+                            <th>Created</th>
+                            <th>Duration</th>
+                            <th>Factors</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var entry in FilteredEntries)
+                        {
+                            <tr>
+                                <td><a href="@($"/jobs/{entry.JobId}")"><code>@entry.JobId</code></a></td>
+                                <td><span class="kind-chip">@KindLabel(entry.Kind)</span></td>
+                                <td><span class="digits-chip">@($"C{entry.DigitCount}")</span> <code class="ntrunc"
+                                                                                                         title="@entry.TargetN">@entry.TargetN</code></td>
+                                    <td>
+                                        <JobStatusBadge Status="entry.Status" />
+                                    </td>
+                                    <td>@(entry.CreatedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "—")</td>
+                                    <td class="elapsed">@StatusPresentation.FormatElapsed(entry.TotalSeconds)</td>
+                                    <td class="factor-cell">@(entry.Factors.Count == 0 ? "—" : string.Join(" × ", entry.Factors))</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </section>
+            }
+
+@code {
+    private Timer? _throttle;
+    private volatile bool _dirty;
+    private JobKindFilter _kind;
+    private JobStatus? _status;
+
+    private IReadOnlyList<JobListEntry> FilteredEntries => Catalog.List()
+        .Where(entry => _kind switch
+        {
+            JobKindFilter.OneShot => entry.Kind == JobKind.OneShot,
+            JobKindFilter.Distributed => entry.Kind == JobKind.Distributed,
+            _ => true,
+        })
+        .Where(entry => _status is null || entry.Status == _status)
+        .ToArray();
+
+    protected override void OnInitialized()
+    {
+        LocalJobs.Changed += OnChanged;
+        Overlord.Changed += OnChanged;
+        _throttle = new Timer(_ => Flush(), null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
+    }
+
+    private void OnChanged() => _dirty = true;
+
+    private void Flush()
+    {
+        if (!_dirty)
+        {
+            return;
+        }
+
+        _dirty = false;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private static double? RelationPercent(OverlordJobSnapshot job) => job.RelationTarget <= 0
+        ? null
+        : 100D * job.UsableRelations / job.RelationTarget;
+
+    private static string KindLabel(JobKind kind) => kind == JobKind.Distributed ? "distributed" : "one-shot";
+    private static string KindFilterLabel(JobKindFilter filter) => filter switch
+    {
+        JobKindFilter.OneShot => "One-shot",
+        JobKindFilter.Distributed => "Distributed",
+        _ => "All",
+    };
+
+    public void Dispose()
+    {
+        LocalJobs.Changed -= OnChanged;
+        Overlord.Changed -= OnChanged;
+        _throttle?.Dispose();
+    }
+
+    private enum JobKindFilter { All, OneShot, Distributed }
+}

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>SIQS.UI.Tests</RootNamespace>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3.mtp-v2" Version="3.2.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SIQS.UI\SIQS.UI.csproj" />
+    <ProjectReference Include="..\SIQS.Pipeline\SIQS.Pipeline.csproj" />
+    <ProjectReference Include="..\SIQS.Overlord\SIQS.Overlord.csproj" />
+  </ItemGroup>
+</Project>

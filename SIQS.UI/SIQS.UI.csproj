@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\SIQS.Pipeline\SIQS.Pipeline.csproj" />
+    <ProjectReference Include="..\SIQS.Contracts\SIQS.Contracts.csproj" />
+    <ProjectReference Include="..\SIQS.Overlord\SIQS.Overlord.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+  </PropertyGroup>
+
+  <Target Name="PublishDistributedSieveClient" AfterTargets="Publish">
+    <MSBuild
+      Condition="'$(SkipSieveClientPublish)' != 'true'"
+      Projects="..\QS.SieveClient\QS.SieveClient.csproj"
+      Targets="Restore;Publish"
+      Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64;SelfContained=true;PublishSingleFile=true;DebugType=None;DebugSymbols=false;PublishDir=$(MSBuildProjectDirectory)\download\windows-x64\"
+      BuildInParallel="false" />
+    <MSBuild
+      Condition="'$(SkipSieveClientPublish)' != 'true'"
+      Projects="..\QS.SieveClient\QS.SieveClient.csproj"
+      Targets="Restore;Publish"
+      Properties="Configuration=$(Configuration);RuntimeIdentifier=linux-x64;SelfContained=true;PublishSingleFile=true;DebugType=None;DebugSymbols=false;PublishDir=$(MSBuildProjectDirectory)\download\linux-x64\"
+      BuildInParallel="false" />
+    <Copy
+      SourceFiles="$(MSBuildProjectDirectory)\download\windows-x64\qs-sieve-client.exe"
+      DestinationFolder="$(PublishDir)download\windows-x64\"
+      SkipUnchangedFiles="true" />
+    <Copy
+      SourceFiles="$(MSBuildProjectDirectory)\download\linux-x64\qs-sieve-client"
+      DestinationFolder="$(PublishDir)download\linux-x64\"
+      SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

@@ -1,0 +1,56 @@
+@page "/learn"
+
+<PageTitle>Sieve School · SIQS</PageTitle>
+
+<header class="page-head">
+    <SectionIcon Name="learn" />
+    <div>
+        <h1>Sieve School</h1>
+        <p>Learn how the quadratic sieve cracks composites — then prove it.</p>
+    </div>
+</header>
+
+<section class="nav-card-grid learn-cards">
+    <NavCard Href="/learn/walkthrough" Icon="tour" Title="The Guided Tour"
+             Description="Ten short steps through classical QS, with a real worked example you can follow by hand.">
+        <Stat>10 steps</Stat>
+    </NavCard>
+    <NavCard Href="/learn/quiz" Icon="quiz" Title="The Quiz"
+             Description="Ten questions drawn from a pool of 150. A new mix every time.">
+        <Stat>Foundations · Factor base · Sieving · Filtering · Linear algebra · Square root</Stat>
+    </NavCard>
+</section>
+
+<section class="panel learn-mapping">
+    <h2>How this app maps to the theory</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Tour step</th>
+                <th>Pipeline phase</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>4 · The factor base</td>
+                <td><a href="/factorize">Factor base</a></td>
+            </tr>
+            <tr>
+                <td>5–6 · Sieving and relations</td>
+                <td><a href="/factorize">Sieving</a></td>
+            </tr>
+            <tr>
+                <td>7 · Filtering</td>
+                <td><a href="/factorize">Filtering</a></td>
+            </tr>
+            <tr>
+                <td>8 · Linear algebra</td>
+                <td><a href="/factorize">Linear algebra</a></td>
+            </tr>
+            <tr>
+                <td>9 · Square root</td>
+                <td><a href="/factorize">Square root</a></td>
+            </tr>
+        </tbody>
+    </table>
+</section>

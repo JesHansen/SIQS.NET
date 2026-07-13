@@ -1,0 +1,16 @@
+@if (Status is { } jobStatus)
+{
+    <span class="badge @StatusPresentation.CssClass(jobStatus)">@SiqsTokens.ToToken(jobStatus)</span>
+}
+else if (PhaseStatus is { } phaseStatus)
+{
+    <span class="badge @StatusPresentation.CssClass(phaseStatus)">@SiqsTokens.ToToken(phaseStatus)</span>
+}
+
+@code {
+    [Parameter]
+    public JobStatus? Status { get; set; }
+
+    [Parameter]
+    public PhaseStatus? PhaseStatus { get; set; }
+}

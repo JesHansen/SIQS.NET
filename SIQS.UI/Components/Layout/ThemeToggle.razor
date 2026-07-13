@@ -1,0 +1,12 @@
+@rendermode InteractiveServer
+@inject IJSRuntime JS
+
+<button class="theme-toggle" type="button" @onclick="Toggle" aria-label="Toggle colour theme">
+    <span class="theme-toggle__sun" aria-hidden="true">☀</span>
+    <span class="theme-toggle__moon" aria-hidden="true">☾</span>
+    <span class="theme-toggle__label">Theme</span>
+</button>
+
+@code {
+    private async Task Toggle() => await JS.InvokeVoidAsync("siqsTheme.toggle");
+}

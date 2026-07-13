@@ -1,0 +1,52 @@
+@rendermode InteractiveServer
+@implements IDisposable
+@using SIQS.Overlord
+@inject FactorizationJobService Jobs
+@inject OverlordService Overlord
+
+<div class="live-status">
+    @if (Jobs.Current is { IsRunning: true } job)
+    {
+        <a class="live-status__item" href="@($"/jobs/{job.JobId}")"><span class="live-status__dot"></span>1 job running</a>
+    }
+    @if (Overlord.Snapshot() is { } distributed && Overlord.IsBusy)
+    {
+        <a class="live-status__item" href="@($"/jobs/{distributed.JobId}")"><span class="live-status__dot"></span>1 distributed job running</a>
+    }
+    @if (Jobs.Current is not { IsRunning: true } && !Overlord.IsBusy)
+    {
+        <span class="live-status__idle">No jobs running</span>
+    }
+</div>
+
+@code {
+    private Timer? _throttle;
+    private volatile bool _dirty;
+
+    protected override void OnInitialized()
+    {
+        Jobs.Changed += OnChanged;
+        Overlord.Changed += OnChanged;
+        _throttle = new Timer(_ => Flush(), null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
+    }
+
+    private void OnChanged() => _dirty = true;
+
+    private void Flush()
+    {
+        if (!_dirty)
+        {
+            return;
+        }
+
+        _dirty = false;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Jobs.Changed -= OnChanged;
+        Overlord.Changed -= OnChanged;
+        _throttle?.Dispose();
+    }
+}

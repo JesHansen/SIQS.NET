@@ -1,0 +1,159 @@
+@page "/factorize"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject FactorizationJobService Jobs
+@inject RunParameterValidator Validator
+@inject JobCatalog Catalog
+
+<PageTitle>Factorize · SIQS</PageTitle>
+
+<header class="page-head">
+    <SectionIcon Name="factorize" />
+    <div>
+        <h1>Factorize</h1>
+        <p>Run a one-shot SIQS factorization on the server.</p>
+    </div>
+</header>
+
+<div class="console factorize-console">
+    <section class="panel run-form">
+        <h2>New factorization</h2>
+        <label class="field"><span>Target N</span><input @bind="_form.TargetN" inputmode="numeric"
+                                                             placeholder="composite integer" /></label>
+            <details>
+                <summary>Advanced parameters</summary>
+                <div class="grid factorize-options">
+                    <label class="field"><span>Factor base bound</span><input @bind="_form.FactorBaseBound"
+                                                                                  inputmode="numeric" placeholder="auto" /></label>
+                        <label class="field"><span>Multiplier</span><input @bind="_form.Multiplier" inputmode="numeric"
+                                                                               placeholder="auto" /></label>
+                            <label class="field"><span>Sieve half interval</span><input @bind="_form.SieveHalfInterval"
+                                                                                            inputmode="numeric" placeholder="auto" /></label>
+                                <label class="field"><span>Relation target</span><input @bind="_form.RelationTarget" inputmode="numeric"
+                                                                                            placeholder="auto" /></label>
+                                    <label class="field"><span>Large-prime bound</span><input @bind="_form.LargePrimeBound"
+                                                                                                  inputmode="numeric" placeholder="auto" /></label>
+                                        <label class="field"><span>Error margin</span><input @bind="_form.SieveErrorMargin" inputmode="numeric"
+                                                                                                 placeholder="auto" /></label>
+                                            <label class="field"><span>A prime count</span><input @bind="_form.APrimeCount" inputmode="numeric"
+                                                                                                      placeholder="auto" /></label>
+                                                <label class="field"><span>Sieving parallelism</span><input @bind="_form.SievingParallelism"
+                                                                                                                inputmode="numeric" placeholder="auto" /></label>
+                                                    <label class="field"><span>Sieve block size</span><input @bind="_form.SieveBlockSize"
+                                                                                                                 inputmode="numeric" placeholder="auto" /></label>
+                                                        <label class="field"><span>Max dependencies</span><input @bind="_form.LinearAlgebraMaxDependencies"
+                                                                                                                     inputmode="numeric" placeholder="auto" /></label>
+                                                            <label class="check"><input type="checkbox" @bind="_form.ContinueSquareRootAfterFactor" /> Continue
+                                                                square root after factor</label>
+                                                            </div>
+                                                        </details>
+                                                        <div class="actions"><button class="primary" @onclick="Start" disabled="@Jobs.IsBusy">Start</button><button
+                                                            type="button" @onclick="Jobs.Cancel" disabled="@(!Jobs.IsBusy)">Cancel</button></div>
+                                                            @if (_errors.Count > 0)
+                                                            {
+                                                                <ul class="errors">@foreach (var error in _errors) {
+                                                                    <li>@error</li>
+                                                                }
+                                                            </ul>
+                                                        }
+                                                    </section>
+
+                                                    <section class="panel status">
+                                                        <h2>Current job</h2>
+                                                        @if (Jobs.Current is { } job)
+                                                        {
+                                                            <div class="job-head"><code>@job.JobId</code>
+                                                                <JobStatusBadge Status="job.Status" /><code class="ntrunc" title="@job.TargetN">N = @job.TargetN</code><a
+                                                                href="@($"/jobs/{job.JobId}")">details</a>
+                                                            </div>
+                                                            <PhaseTimeline Items="job.Phases.Select(phase => phase.ToTimelineItem()).ToArray()" />
+                                                            @if (job.Result is { FactorFound: true } result)
+                                                            {
+                                                                <div class="result found"><strong>Factors found:</strong>
+                                                                    @string.Join(" × ", result.Factors) <a href="@($"/jobs/{job.JobId}")">View details</a></div>
+                                                                }
+            else if (!string.IsNullOrEmpty(job.Error))
+                                                                {
+
+                                                                    <div class="result none"><strong>Error:</strong> @job.Error</div>
+                                                                }
+                                                            }
+                                                            else
+                                                            {
+                                                                <p class="muted">No job has been started in this session.</p>
+                                                            }
+                                                        </section>
+
+                                                        <section class="panel recent">
+                                                            <h2>Recent jobs</h2>
+                                                            <table>
+                                                                <thead>
+                                                                    <tr>
+                                                                        <th>Job</th>
+                                                                        <th>N</th>
+                                                                        <th>Status</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody>
+                                                                    @foreach (var summary in Recent)
+                                                                    {
+                                                                        <tr>
+                                                                            <td><a href="@($"/jobs/{summary.JobId}")"><code>@summary.JobId</code></a></td>
+                                                                            <td><code class="ntrunc" title="@summary.TargetN">@summary.TargetN</code></td>
+                                                                            <td>
+                                                                                <JobStatusBadge Status="summary.Status" />
+                                                                            </td>
+                                                                        </tr>
+                                                                    }
+                                                                    @if (Recent.Count == 0)
+                                                                    {
+                                                                        <tr>
+                                                                            <td colspan="3" class="muted">none yet</td>
+                                                                        </tr>
+                                                                    }
+                                                                </tbody>
+                                                            </table>
+                                                            <p><a href="/jobs">See all jobs →</a></p>
+                                                        </section>
+                                                    </div>
+
+@code {
+    private readonly RunParameterForm _form = new();
+    private IReadOnlyList<string> _errors = Array.Empty<string>();
+    private Timer? _throttle;
+    private volatile bool _dirty;
+
+    private IReadOnlyList<JobListEntry> Recent => Catalog.List().Take(5).ToArray();
+
+    protected override void OnInitialized()
+    {
+        Jobs.Changed += OnChanged;
+        _throttle = new Timer(_ => Flush(), null, TimeSpan.FromMilliseconds(200), TimeSpan.FromMilliseconds(200));
+    }
+
+    private void Start()
+    {
+        var outcome = Validator.Validate(_form);
+        _errors = outcome.Errors;
+        if (outcome.Request is { } request)
+        {
+            try { Jobs.Start(request); }
+            catch (Exception ex) { _errors = new[] { ex.Message }; }
+        }
+    }
+
+    private void OnChanged() => _dirty = true;
+
+    private void Flush()
+    {
+        if (!_dirty) { return; }
+        _dirty = false;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Jobs.Changed -= OnChanged;
+        _throttle?.Dispose();
+    }
+}

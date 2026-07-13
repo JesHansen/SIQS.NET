@@ -1,0 +1,286 @@
+@page "/jobs/{JobId}"
+@rendermode InteractiveServer
+@implements IDisposable
+@using SIQS.Overlord
+@inject FactorizationJobService Jobs
+@inject OverlordService Overlord
+@inject ArtifactBrowser Artifacts
+
+<PageTitle>Job @JobId · SIQS</PageTitle>
+
+@if (LocalLive is { } local)
+{
+    <header class="page-head">
+        <SectionIcon Name="jobs" />
+        <div>
+            <h1>Job <code>@local.JobId</code></h1>
+            <p>One-shot factorization in progress.</p>
+        </div>
+    </header>
+    <section class="panel job-summary">
+        <JobStatusBadge Status="local.Status" /><code class="target-full">@local.TargetN</code><button class="danger"
+                                                                                                       type="button" @onclick="Jobs.Cancel">Cancel job</button>
+    </section>
+    <section class="panel">
+        <h2>Phase timeline</h2>
+        <PhaseTimeline Items="local.Phases.Select(phase => phase.ToTimelineItem()).ToArray()" />
+    </section>
+    @if (local.Phases.FirstOrDefault(phase => phase.Status == PhaseStatus.Running) is { } active)
+    {
+        <section class="panel">
+            <h2>Live counters · @StatusPresentation.DisplayName(active.Phase)</h2>
+            <pre class="artifact-text">@FormatCounters(active.Counters)</pre>
+        </section>
+    }
+}
+else if (DistributedLive is { } distributed)
+{
+    <header class="page-head">
+        <SectionIcon Name="distributed" />
+        <div>
+            <h1>Job <code>@distributed.JobId</code></h1>
+            <p>Distributed factorization in progress.</p>
+        </div>
+    </header>
+    <section class="panel job-summary"><span class="kind-chip">distributed</span><code
+        class="target-full">@distributed.TargetN</code></section>
+        <section class="panel">
+            <h2>Relations</h2>
+            <ProgressBar Percent="RelationPercent(distributed)"
+                         Label="@($"{distributed.UsableRelations} usable / {distributed.RelationTarget} target relations")" />
+        </section>
+        @if (distributed.Leases is { } leases)
+        {
+            <section class="panel">
+                <h2>Lease pool</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>A-candidates</th>
+                            <th>Assigned</th>
+                            <th>Completed</th>
+                            <th>Outstanding</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>@leases.ACount</td>
+                            <td>@leases.Assigned</td>
+                            <td>@leases.Completed</td>
+                            <td>@leases.Outstanding</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+        }
+        <p class="muted">Filtering, linear algebra and square root run on this server after sieving completes.</p>
+    }
+else if (_job is { } job)
+    {
+        <header class="page-head">
+            <SectionIcon Name="jobs" />
+            <div>
+                <h1>Job <code>@job.JobId</code></h1>
+                <p>Archived @KindLabel(job.JobId) factorization.</p>
+            </div>
+        </header>
+        <section class="panel job-summary">
+            <JobStatusBadge Status="job.Status" /><code class="target-full">@job.TargetN</code>
+        </section>
+        <section class="panel">
+            <h2>Phase timeline</h2>
+            <PhaseTimeline Items="job.PhaseStates.Select(phase => phase.ToTimelineItem()).ToArray()" />
+        </section>
+        <section class="panel">
+            <h2>Result</h2>
+            @if (job.FinalFactors.Count > 0)
+            {
+                <p class="result found factor-result">@string.Join(" × ", job.FinalFactors)</p>
+            }
+            else if (job.ErrorSummary is { } error)
+            {
+
+                <p class="result none">
+                    <strong>@StatusPresentation.DisplayName(error.Phase) failed:</strong> @error.Message</p>
+                }
+        else
+                {
+
+                    <p class="result none">No non-trivial factor found.</p>
+                }
+            </section>
+            <section class="panel">
+                <h2>Phase details</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Phase</th>
+                            <th>Status</th>
+                            <th>Elapsed</th>
+                            <th>Counters</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var phase in job.PhaseStates)
+                        {
+                            <tr>
+                                <td>@StatusPresentation.DisplayName(phase.Phase)</td>
+                                <td>
+                                    <JobStatusBadge PhaseStatus="phase.Status" />
+                                </td>
+                                <td class="elapsed">@StatusPresentation.FormatElapsed(phase.ElapsedSeconds)</td>
+                                <td class="counters">@FormatCounters(phase.Counters)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </section>
+            @if (job.TopUpRounds.Count > 0)
+            {
+                <section class="panel">
+                    <h2>Top-up rounds</h2>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Round</th>
+                                <th>Deficit</th>
+                                <th>Usable relations</th>
+                                <th>Margin</th>
+                                <th>Target</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var round in job.TopUpRounds)
+                            {
+                                <tr>
+                                    <td>@round.Round</td>
+                                    <td>@round.Deficit</td>
+                                    <td>@round.CurrentUsableRelations</td>
+                                    <td>@round.Margin</td>
+                                    <td>@round.NewRelationTarget</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </section>
+            }
+            <section class="panel">
+                <h2>Artifacts</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Size</th>
+                            <th>Modified</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var artifact in _artifacts)
+                        {
+                            <tr class="@(artifact.Exists ? string.Empty : "muted")">
+                                <td><code>@artifact.Name</code></td>
+                                <td>@(artifact.Exists ? $"{artifact.SizeBytes} B" : "missing")</td>
+                                <td>@(artifact.LastWriteUtc?.ToString("u") ?? "—")</td>
+                                <td>@if (artifact.Exists) {
+                                    <a href="@($"/jobs/{job.JobId}/artifacts/{artifact.Name}")">view</a>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </section>
+        <details class="panel">
+            <summary>Parameters</summary>
+            <table>
+                <tbody>@foreach (var parameter in job.Parameters) {
+                    <tr>
+                        <td><code>@parameter.Key</code></td>
+                        <td><code>@parameter.Value</code></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </details>
+}
+else
+{
+    <section class="panel empty-state">
+        <p>Job <code>@JobId</code> was not found.</p><a href="/jobs">Back to jobs</a>
+    </section>
+}
+
+@code {
+    [Parameter] public string JobId { get; set; } = string.Empty;
+
+    private JobStateSnapshot? _job;
+    private IReadOnlyList<ArtifactInfo> _artifacts = Array.Empty<ArtifactInfo>();
+    private Timer? _throttle;
+    private volatile bool _dirty;
+
+    private FactorizationJobSnapshot? LocalLive => Jobs.Current is { IsRunning: true } job && job.JobId == JobId ? job :
+null;
+    private OverlordJobSnapshot? DistributedLive => Overlord.Snapshot() is { } job && job.JobId == JobId && Overlord.IsBusy
+? job : null;
+
+    protected override void OnInitialized()
+    {
+        Jobs.Changed += OnChanged;
+        Overlord.Changed += OnChanged;
+        _throttle = new Timer(_ => Flush(), null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
+    }
+
+    protected override void OnParametersSet() => LoadDiskJob();
+
+    private void OnChanged() => _dirty = true;
+
+    private void Flush()
+    {
+        if (!_dirty)
+        {
+            return;
+        }
+
+        _dirty = false;
+        LoadDiskJob();
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void LoadDiskJob()
+    {
+        var directory = Path.Combine(Jobs.RunsRoot, JobId);
+        if (!Directory.Exists(directory))
+        {
+            _job = null;
+            _artifacts = Array.Empty<ArtifactInfo>();
+            return;
+        }
+
+        try
+        {
+            _job = JobStore.LoadSnapshot(directory);
+            _artifacts = Artifacts.List(directory);
+        }
+        catch
+        {
+            _job = null;
+            _artifacts = Array.Empty<ArtifactInfo>();
+        }
+    }
+
+    private static string FormatCounters(IReadOnlyDictionary<string, string> counters)
+        => string.Join("  ", counters.Where(counter => counter.Key != "elapsed_seconds").Select(counter =>
+$"{counter.Key}={counter.Value}"));
+
+    private static double? RelationPercent(OverlordJobSnapshot job) => job.RelationTarget <= 0 ? null : 100D *
+job.UsableRelations / job.RelationTarget;
+    private static string KindLabel(string jobId) => jobId.StartsWith('D') ? "distributed" : "one-shot";
+
+    public void Dispose()
+    {
+        Jobs.Changed -= OnChanged;
+        Overlord.Changed -= OnChanged;
+        _throttle?.Dispose();
+    }
+}

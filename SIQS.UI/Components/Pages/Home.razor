@@ -1,0 +1,81 @@
+@page "/"
+@rendermode InteractiveServer
+@implements IDisposable
+@using SIQS.Overlord
+@inject FactorizationJobService Jobs
+@inject OverlordService Overlord
+@inject JobCatalog Catalog
+
+<PageTitle>SIQS · Quadratic sieve workbench</PageTitle>
+
+<section class="hero-panel">
+    <div>
+        <p class="hero-panel__eyebrow">Self-initializing quadratic sieve</p>
+        <h1>Factor numbers. Understand how.</h1>
+        <p>SIQS is a self-initializing quadratic sieve: run factorizations on the server, fan the sieve step out to your
+            other machines, and learn how the algorithm works.</p>
+        </div>
+        <svg class="hero-sieve" viewBox="0 0 240 160" aria-hidden="true">
+            <g>@for (var row = 0; row < 8; row++) { for (var column = 0; column < 12; column++) {
+                <rect x="@(column * 20 + 4)" y="@(row * 20 + 4)" width="12" height="12"
+                      class="@((row * 7 + column * 5) % 11 < 3 ? "hit" : string.Empty)" />
+            }
+        }
+    </g>
+</svg>
+</section>
+
+<section class="nav-card-grid">
+    <NavCard Href="/factorize" Icon="factorize" Title="Factorize"
+             Description="Run a one-shot factorization on the server.">
+        <Stat>@LocalStatus</Stat>
+    </NavCard>
+    <NavCard Href="/distributed" Icon="distributed" Title="Distributed"
+             Description="Fan the sieve step out to your other machines.">
+        <Stat>@DistributedStatus</Stat>
+    </NavCard>
+    <NavCard Href="/jobs" Icon="jobs" Title="Jobs" Description="Every run, live and historical, in one place.">
+        <Stat>@($"{Catalog.CompletedCount()} completed")</Stat>
+    </NavCard>
+    <NavCard Href="/learn" Icon="learn" Title="Sieve School"
+             Description="A guided tour of the quadratic sieve, then test yourself." />
+    <NavCard Href="/history" Icon="history" Title="History"
+             Description="Who invented the quadratic sieve, and what it broke." />
+</section>
+
+@code {
+    private Timer? _throttle;
+    private volatile bool _dirty;
+
+    private string LocalStatus => Jobs.Current is { } job ? SiqsTokens.ToToken(job.Status) : "idle";
+    private string DistributedStatus => Overlord.Snapshot() is { } job && Overlord.IsBusy ? PhaseText(job.Phase) : "no pool active";
+
+    protected override void OnInitialized()
+    {
+        Jobs.Changed += OnChanged;
+        Overlord.Changed += OnChanged;
+        _throttle = new Timer(_ => Flush(), null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
+    }
+
+    private void OnChanged() => _dirty = true;
+
+    private void Flush()
+    {
+        if (!_dirty)
+        {
+            return;
+        }
+
+        _dirty = false;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private static string PhaseText(OverlordPhase phase) => phase.ToString().ToLowerInvariant();
+
+    public void Dispose()
+    {
+        Jobs.Changed -= OnChanged;
+        Overlord.Changed -= OnChanged;
+        _throttle?.Dispose();
+    }
+}

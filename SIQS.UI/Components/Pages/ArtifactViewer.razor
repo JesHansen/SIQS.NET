@@ -1,0 +1,59 @@
+@page "/jobs/{JobId}/artifacts/{Name}"
+@inject FactorizationJobService Jobs
+@inject ArtifactBrowser Artifacts
+
+<PageTitle>@Name — @JobId</PageTitle>
+
+<header class="page-head">
+    <SectionIcon Name="jobs" />
+    <div>
+        <h1><code>@Name</code></h1>
+        <p>Artifact from job <a href="@($"/jobs/{JobId}")">@JobId</a>.</p>
+    </div>
+</header>
+
+<section class="panel artifact-view">
+
+    @if (_preview is null || !_preview.Exists)
+    {
+        <p class="muted">Artifact not found.</p>
+    }
+    else
+    {
+        <div class="meta">
+            <span>@_preview.SizeBytes bytes</span>
+            <span>@_preview.LineCount lines (preview)</span>
+            @if (_preview.Truncated)
+            {
+                <span class="warn-text">preview truncated</span>
+            }
+        </div>
+        <pre class="artifact-text">@_preview.Text</pre>
+    }
+</section>
+
+@code {
+    [Parameter] public string JobId { get; set; } = string.Empty;
+    [Parameter] public string Name { get; set; } = string.Empty;
+
+    private ArtifactPreview? _preview;
+
+    protected override void OnParametersSet()
+    {
+        var directory = Path.Combine(Jobs.RunsRoot, JobId);
+        if (!Directory.Exists(directory))
+        {
+            _preview = null;
+            return;
+        }
+
+        try
+        {
+            _preview = Artifacts.Preview(directory, Name);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            _preview = null;
+        }
+    }
+}

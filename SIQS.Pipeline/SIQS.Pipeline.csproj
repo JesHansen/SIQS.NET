@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\SIQS.Contracts\SIQS.Contracts.csproj" />
+    <ProjectReference Include="..\Factorbase\Factorbase.csproj" />
+    <ProjectReference Include="..\Sieving\Sieving.csproj" />
+    <ProjectReference Include="..\Filtering\Filtering.csproj" />
+    <ProjectReference Include="..\LinearAlgebra\LinearAlgebra.csproj" />
+    <ProjectReference Include="..\SquareRoot\SquareRoot.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

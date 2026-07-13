@@ -1,0 +1,28 @@
+<a class="nav-card" href="@Href">
+    <SectionIcon Name="Icon" />
+    <div class="nav-card__content">
+        <h2>@Title</h2>
+        <p>@Description</p>
+    </div>
+    @if (Stat is not null)
+    {
+        <div class="nav-card__stat">@Stat</div>
+    }
+</a>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Href { get; set; } = string.Empty;
+
+    [Parameter, EditorRequired]
+    public string Icon { get; set; } = string.Empty;
+
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = string.Empty;
+
+    [Parameter, EditorRequired]
+    public string Description { get; set; } = string.Empty;
+
+    [Parameter]
+    public RenderFragment? Stat { get; set; }
+}

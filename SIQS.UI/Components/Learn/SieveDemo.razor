@@ -1,0 +1,46 @@
+<div class="sieve-demo">
+    <div class="sieve-demo__legend"><span class="p2">p = 2</span><span class="p17">p = 17</span><span class="p23">p = 23</span><span class="p29">p = 29</span></div>
+    <div class="sieve-demo__cells">
+        @for (var position = 0; position < 32; position++)
+        {
+            var cell = position;
+            <div class="sieve-demo__cell @(_step == 5 && Smooth.Contains(cell) ? "smooth" : string.Empty)">
+                <div class="sieve-demo__segments">@foreach (var hit in Hits.Where(hit => hit.Position == cell && hit.Step <= _step)) { <span class="@hit.Prime" style="height:@hit.Height"></span> }</div><small>@cell</small>
+            </div>
+        }
+    </div>
+    <p class="sieve-demo__narration">@Narration</p>
+    <div class="actions"><button type="button" @onclick="Back" disabled="@(_step == 0)">Back</button><button type="button" @onclick="Next" disabled="@(_step == 5)">Step</button><button type="button" @onclick="Reset" disabled="@(_step == 0)">Reset</button></div>
+</div>
+
+@code {
+    private static readonly int[] Smooth = [0, 2, 3];
+    private static readonly SieveHit[] Hits = BuildHits();
+    private static readonly string[] Narrations =
+    [
+        "Start with the 32 positions x = 0 … 31. Each column will collect log-weight from factor-base primes.",
+        "2 divides y(x) at every odd position, so those cells receive a log 2 segment.",
+        "17 divides y(x) exactly when x ≡ 3 or 4 (mod 17).",
+        "23 divides at x = 2, 3, 25 and 26. Real sieves also mark prime powers: x = 2 receives a second segment for 23².",
+        "29 divides y(x) exactly when x ≡ 0 or 13 (mod 29).",
+        "x = 0 and x = 3 are two relations used in the tour; x = 71 is beyond this window. x = 2 is lucky: y(2) = 23², so 126² ≡ 23² (mod N) cracks N alone.",
+    ];
+    private int _step;
+    private string Narration => Narrations[_step];
+
+    private void Back() => _step--;
+    private void Next() => _step++;
+    private void Reset() => _step = 0;
+
+    private static SieveHit[] BuildHits()
+    {
+        var hits = new List<SieveHit>();
+        hits.AddRange(Enumerable.Range(0, 16).Select(index => new SieveHit(index * 2 + 1, 1, "p2", "10px")));
+        hits.AddRange(new[] { 3, 4, 20, 21 }.Select(position => new SieveHit(position, 2, "p17", "40px")));
+        hits.AddRange(new[] { 2, 3, 25, 26, 2 }.Select(position => new SieveHit(position, 3, "p23", "44px")));
+        hits.AddRange(new[] { 0, 13, 29 }.Select(position => new SieveHit(position, 4, "p29", "47px")));
+        return hits.ToArray();
+    }
+
+    private sealed record SieveHit(int Position, int Step, string Prime, string Height);
+}

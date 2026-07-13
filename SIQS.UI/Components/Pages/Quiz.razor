@@ -1,0 +1,122 @@
+@page "/learn/quiz"
+@rendermode InteractiveServer
+@using SIQS.UI.Components.Learn
+
+<PageTitle>The Quiz · Sieve School</PageTitle>
+
+<header class="page-head">
+    <SectionIcon Name="quiz" />
+    <div>
+        <h1>The quiz</h1>
+        <p>Ten questions, four choices, instant feedback.</p>
+    </div>
+</header>
+
+@if (_state == QuizState.Idle)
+{
+    <section class="panel quiz-intro">
+        <p>Every round draws ten questions from the verified 150-question Sieve School bank. Every topic appears at least
+            once.</p>
+            <div class="topic-chips">@foreach (var topic in Enum.GetValues<QuizTopic>()) {
+                <span>@TopicLabel(topic)</span>
+            }
+        </div><button class="primary" type="button" @onclick="Start">Start quiz</button>
+    </section>
+}
+else if (_state == QuizState.InProgress && Current is { } question)
+{
+    <section class="panel quiz-question">
+        <div class="quiz-question__meta"><span>Question @(_current + 1) of 10</span><span
+            class="kind-chip">@TopicLabel(question.Question.Topic)</span></div>
+            <h2>@question.Question.Prompt</h2>
+            <div class="quiz-choices">@for (var index = 0; index < question.Choices.Count; index++) { var choice = index;
+                <button type="button" class="@ChoiceClass(question, choice)" disabled="@Answered"
+                        @onclick="() => Answer(choice)">@question.Choices[choice]</button>
+            }
+        </div>
+        @if (Answered)
+        {
+            <div class="quiz-explanation"><strong>@(IsCorrect ? "Correct." : "Not quite.")</strong>
+                @question.Question.Explanation</div><button class="primary" type="button" @onclick="Next">@(_current == 9 ? "See results →" : "Next →")</button>
+            }
+        </section>
+    }
+else if (_round is { } round)
+    {
+        <section class="panel quiz-results">
+            <p class="quiz-results__score">You scored <strong>@Score / 10</strong></p><svg class="score-ring"
+                                                                                       viewBox="0 0 120 120" aria-label="@($"Score {Score} out of 10")">
+            <circle cx="60" cy="60" r="48" />
+            <circle class="score-ring__value" cx="60" cy="60" r="48" pathLength="100"
+                    style="stroke-dasharray: @ScorePercent 100" /><text x="60" y="67">@Score</text>
+        </svg>
+        <table>
+            <thead>
+                <tr>
+                    <th>Topic</th>
+                    <th>Answered</th>
+                    <th>Correct</th>
+                </tr>
+            </thead>
+            <tbody>@foreach (var topic in Enum.GetValues<QuizTopic>()) {
+                <tr>
+                    <td>@TopicLabel(topic)</td>
+                    <td>@AnswersFor(topic)</td>
+                    <td>@CorrectFor(topic)</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    @if (Wrong.Any())
+    {
+        <h2>Review</h2>@foreach (var item in Wrong) {
+        <div class="quiz-review">
+            <strong>@item.Question.Prompt</strong>
+            <p>Correct answer: @item.Choices[item.CorrectIndex]</p>
+            <p>@item.Question.Explanation</p>
+        </div>
+    }
+}
+<div class="actions"><button class="primary" type="button" @onclick="Start">Try again</button><a class="primary"
+                                                                                                     href="/learn">Back to Sieve School</a></div>
+</section>
+}
+
+@code {
+    private QuizRound? _round;
+    private List<int?> _answers = [];
+    private int _current;
+    private QuizState _state;
+    private QuizQuestionView? Current => _round?.Questions[_current];
+    private bool Answered => _answers[_current] is not null;
+    private bool IsCorrect => _answers[_current] == Current?.CorrectIndex;
+    private int Score => _round is null ? 0 : _round.Questions.Where((question, index) => _answers[index] ==
+question.CorrectIndex).Count();
+    private int ScorePercent => Score * 10;
+    private IEnumerable<QuizQuestionView> Wrong => _round is null ? [] : _round.Questions.Where((question, index) =>
+_answers[index] != question.CorrectIndex);
+
+    private void Start()
+    {
+        _round = QuizSampler.CreateRound(QuizData.All, Random.Shared);
+        _answers = Enumerable.Repeat<int?>(null, _round.Questions.Count).ToList();
+        _current = 0;
+        _state = QuizState.InProgress;
+    }
+
+    private void Answer(int choice) => _answers[_current] = choice;
+    private void Next() { if (_current == 9) { _state = QuizState.Finished; } else { _current++; } }
+    private string ChoiceClass(QuizQuestionView question, int choice) => !Answered ? string.Empty : choice ==
+question.CorrectIndex ? "correct" : _answers[_current] == choice ? "incorrect" : string.Empty;
+    private int AnswersFor(QuizTopic topic) => _round?.Questions.Count(question => question.Question.Topic == topic) ?? 0;
+    private int CorrectFor(QuizTopic topic) => _round?.Questions.Where((question, index) => question.Question.Topic == topic
+&& _answers[index] == question.CorrectIndex).Count() ?? 0;
+    private static string TopicLabel(QuizTopic topic) => topic switch
+    {
+        QuizTopic.FactorBase => "Factor base",
+        QuizTopic.LinearAlgebra => "Linear algebra",
+        QuizTopic.SquareRoot => "Square root",
+        _ => topic.ToString()
+    };
+    private enum QuizState { Idle, InProgress, Finished }
+}
