@@ -197,7 +197,7 @@ Run these from the repository root:
 ```powershell
 dotnet restore SIQS.slnx
 dotnet build SIQS.slnx
-dotnet test SIQS.slnx
+dotnet test --solution SIQS.slnx
 dotnet run --project SIQS.UI/SIQS.UI.csproj
 dotnet run --project QS/QS.csproj -- 15347
 ```

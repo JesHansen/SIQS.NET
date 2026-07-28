@@ -6,6 +6,16 @@ namespace QS;
 /// </summary>
 internal sealed class CliArguments
 {
+    /// <summary>
+    /// Options that never take a value. Without this, <c>--quiet 123</c> would parse the target as
+    /// the value of <c>--quiet</c>, leaving no positional; listing them here keeps the target free to
+    /// appear before or after such flags.
+    /// </summary>
+    private static readonly HashSet<string> ValuelessFlags = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "quiet", "debug", "continue-after-factor",
+    };
+
     private readonly Dictionary<string, string> _values;
     public string? Positional { get; }
 
@@ -20,23 +30,20 @@ internal sealed class CliArguments
         string? positional = null;
         var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        var i = 0;
-        if (args.Length > 0 && !args[0].StartsWith("--", StringComparison.Ordinal))
-        {
-            positional = args[0];
-            i = 1;
-        }
-
-        for (; i < args.Length; i++)
+        for (var i = 0; i < args.Length; i++)
         {
             var arg = args[i];
             if (!arg.StartsWith("--", StringComparison.Ordinal))
             {
-                throw new FormatException($"Unexpected argument '{arg}'.");
+                positional = positional is null
+                    ? arg
+                    : throw new FormatException($"Unexpected argument '{arg}'.");
+                continue;
             }
 
             var key = arg[2..];
-            if (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal))
+            if (!ValuelessFlags.Contains(key)
+                && i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal))
             {
                 values[key] = args[++i];
             }

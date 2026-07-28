@@ -1,69 +1,69 @@
 using System.Numerics;
 using SIQS.Contracts;
-using SIQS.Contracts.Numerics;
 
 namespace Filtering;
 
 /// <summary>
-/// A filtered relation candidate — either a full relation or a combined partial cycle — carrying the
-/// data filtering needs to dedupe, prune, order, and emit it.
+/// A filtered relation candidate — either a full relation or a combined partial cycle — split into the
+/// light structural half (<see cref="CandidateParts"/>) that reduction works on and a heavy arithmetic
+/// payload the output build reads back at the end. A <see cref="CandidateStore"/> decides whether the
+/// payload stays resident or is spilled to disk.
 /// </summary>
 internal sealed class Candidate
 {
-    private Candidate(
-        RelationKind kind,
-        string[] sourceIds,
-        BigInteger t,
-        SparseExponentVector exponents,
-        BigInteger[] largePrimes,
-        string orderKey,
-        int cycleLength)
+    private readonly CandidatePayload _resident;
+    private readonly CandidateStore? _store;
+    private readonly long _token;
+
+    private Candidate(CandidateParts parts, CandidatePayload resident, CandidateStore? store, long token)
     {
-        Kind = kind;
-        SourceIds = sourceIds;
-        T = t;
-        Exponents = exponents;
-        Parity = exponents.DeriveParity();
-        LargePrimes = largePrimes;
-        LargePrime = largePrimes.Length == 1 ? largePrimes[0] : null;
-        OrderKey = orderKey;
-        CycleLength = cycleLength;
+        Kind = parts.Kind;
+        Parity = parts.Parity;
+        OrderKey = parts.OrderKey;
+        CycleLength = parts.CycleLength;
+        DuplicateFingerprint = parts.DuplicateFingerprint;
+        _resident = resident;
+        _store = store;
+        _token = token;
     }
 
     public RelationKind Kind { get; }
-    public string[] SourceIds { get; }
-    public BigInteger T { get; }
-    public SparseExponentVector Exponents { get; }
     public ParityColumnSet Parity { get; }
-    public BigInteger? LargePrime { get; }
-    public BigInteger[] LargePrimes { get; }
     public string OrderKey { get; }
     public int CycleLength { get; }
 
-    public int ExponentAtColumnZero()
-        => Exponents.TryGetExponent(0, out var exponent) ? exponent : 0;
+    /// <summary>Precomputed 128-bit fingerprint of the canonical congruence key used for deduplication,
+    /// so duplicate removal never needs to reload the arithmetic payload.</summary>
+    public (ulong, ulong) DuplicateFingerprint { get; }
 
-    public IReadOnlyDictionary<int, int> ExponentMap() => Exponents.ToDictionary();
+    /// <summary>Retrieves the arithmetic payload, reading it back from the store when it was spilled.</summary>
+    public CandidatePayload LoadPayload() => _store is null ? _resident : _store.Load(_token);
 
-    // Key on the congruence itself, not on source ids: the sieve can rediscover the same
-    // lattice point under a mirrored polynomial (t' = N - t, identical factorization), and
-    // such re-finds only yield trivial x = +-y dependencies.
-    public string DuplicateKey(BigInteger scaledN) =>
-        RelationCongruence.CanonicalKey(T, Exponents, LargePrimes, scaledN);
+    public static Candidate Resident(CandidateParts parts) => new(parts, parts.Payload, store: null, token: 0);
 
-    public static Candidate FromFull(RawRelationRecord full)
+    public static Candidate Spilled(CandidateParts parts, CandidateStore store, long token)
+        => new(parts, default, store, token);
+}
+
+/// <summary>The structural half of a candidate plus its payload, as produced before the store decides
+/// on residency. Kind, parity, order key, cycle length, and the duplicate fingerprint stay resident on
+/// the <see cref="Candidate"/>; <see cref="Payload"/> may be spilled.</summary>
+internal readonly record struct CandidateParts(
+    RelationKind Kind,
+    ParityColumnSet Parity,
+    string OrderKey,
+    int CycleLength,
+    (ulong, ulong) DuplicateFingerprint,
+    CandidatePayload Payload)
+{
+    public static CandidateParts FromFull(RawRelationRecord full, BigInteger scaledN)
     {
-        return new Candidate(
-            RelationKind.Full,
-            new[] { full.RelationId },
-            full.T,
-            full.FactorExponents,
-            Array.Empty<BigInteger>(),
-            full.RelationId,
-            1);
+        var payload = new CandidatePayload(
+            new[] { full.RelationId }, full.T, full.FactorExponents, Array.Empty<BigInteger>());
+        return Build(RelationKind.Full, full.RelationId, cycleLength: 1, payload, scaledN);
     }
 
-    public static Candidate FromCombined(IReadOnlyList<PartialLite> sourceRelations, BigInteger scaledN)
+    public static CandidateParts FromCombined(IReadOnlyList<PartialLite> sourceRelations, BigInteger scaledN)
     {
         sourceRelations = sourceRelations.OrderBy(r => r.RelationId, StringComparer.Ordinal).ToArray();
         var exponents = new Dictionary<int, int>();
@@ -84,7 +84,7 @@ internal sealed class Candidate
                 largePrimeCounts[q] = largePrimeCounts.GetValueOrDefault(q) + 1;
             }
 
-            t = IntegerMath.Mod(t * relation.T, scaledN);
+            t = SIQS.Contracts.Numerics.IntegerMath.Mod(t * relation.T, scaledN);
         }
 
         var largePrimes = new List<BigInteger>();
@@ -113,13 +113,19 @@ internal sealed class Candidate
             values[i] = exponents[columns[i]];
         }
 
-        return new Candidate(
-            RelationKind.CombinedPartial,
-            sourceIds,
-            t,
-            SparseExponentVector.FromOwned(columns, values),
-            largePrimes.ToArray(),
-            string.Join(' ', sourceIds),
-            sourceIds.Length);
+        var payload = new CandidatePayload(
+            sourceIds, t, SparseExponentVector.FromOwned(columns, values), largePrimes.ToArray());
+        return Build(RelationKind.CombinedPartial, string.Join(' ', sourceIds), sourceIds.Length, payload, scaledN);
+    }
+
+    private static CandidateParts Build(
+        RelationKind kind, string orderKey, int cycleLength, CandidatePayload payload, BigInteger scaledN)
+    {
+        // Key on the congruence itself, not on source ids: the sieve can rediscover the same lattice
+        // point under a mirrored polynomial (t' = N - t, identical factorization), and such re-finds
+        // only yield trivial x = +-y dependencies.
+        var fingerprint = Fingerprint.Of(
+            RelationCongruence.CanonicalKey(payload.T, payload.Exponents, payload.LargePrimes, scaledN));
+        return new CandidateParts(kind, payload.Exponents.DeriveParity(), orderKey, cycleLength, fingerprint, payload);
     }
 }

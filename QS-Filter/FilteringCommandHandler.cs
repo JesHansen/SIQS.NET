@@ -33,7 +33,8 @@ internal sealed class FilteringCommandHandler
         var options = new FilteringOptions(
             MaxPartialsPerPrime: command.MaxPartialsPerPrime,
             LargePrimeBound: partialMetadata?.LargePrimeBound,
-            LargePrime2Bound: partialMetadata?.LargePrime2Bound);
+            LargePrime2Bound: partialMetadata?.LargePrime2Bound,
+            SpillDirectory: command.SpillDirectory);
         var result = FilteringEngine.Run(factorBase, fulls, partials, options, progress);
         var format = result.Relations.Relations.Any(r => r.LargePrimes.Count > 1
             || (r.LargePrimes.Count == 1 && r.LargePrime is null))

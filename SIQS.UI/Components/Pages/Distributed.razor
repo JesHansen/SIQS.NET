@@ -96,10 +96,10 @@
                                 <table class="phases">
                                     <thead>
                                         <tr>
-                                            <th>A-candidates</th>
-                                            <th>Assigned</th>
-                                            <th>Completed</th>
-                                            <th>Outstanding leases</th>
+                                            <th>Total A-candidates</th>
+                                            <th>Assigned A-candidates</th>
+                                            <th>Completed A-candidates</th>
+                                            <th title="Issued lease ranges that have not completed or expired">Outstanding ranges</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -223,6 +223,7 @@
     {
         OverlordPhase.Preparing => "preparing",
         OverlordPhase.Sieving => "sieving",
+        OverlordPhase.Draining => "draining uploads",
         OverlordPhase.Finishing => "finishing (filtering / linalg / sqrt)",
         OverlordPhase.Completed => "completed",
         OverlordPhase.Faulted => "faulted",

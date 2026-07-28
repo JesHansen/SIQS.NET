@@ -75,6 +75,26 @@ public sealed class LeaseLedger
         }
     }
 
+    /// <summary>
+    /// Extends an outstanding lease while its client is actively uploading. Returns false when the
+    /// lease has already expired or is unknown; verified relations may still be ingested, but the
+    /// range is no longer protected from reassignment.
+    /// </summary>
+    public bool Renew(string leaseId, TimeSpan ttl, DateTimeOffset now)
+    {
+        lock (_gate)
+        {
+            SweepExpired(now);
+            if (!_outstanding.TryGetValue(leaseId, out var lease))
+            {
+                return false;
+            }
+
+            _outstanding[leaseId] = lease with { ExpiresUtc = now + ttl };
+            return true;
+        }
+    }
+
     /// <summary>True when every range has been handed out and none remain outstanding or reclaimable —
     /// i.e. the whole A-space was sieved and no further work can be produced.</summary>
     public bool IsExhausted

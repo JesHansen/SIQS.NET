@@ -1,41 +1,46 @@
-using SIQS.Contracts.Files;
+using System.Globalization;
+using System.Numerics;
 
 namespace SIQS.Contracts.Distributed;
 
 /// <summary>
-/// Serializes sieved relations into an <see cref="UploadRequest"/> and back, reusing the existing raw
-/// relations text format. The client uses <see cref="ToUpload"/>; the server uses <see cref="Parse"/>.
+/// Maps raw relations to and from the primitive-only records used by the streaming wire protocol.
 /// </summary>
 public static class RelationUploadCodec
 {
-    public static UploadRequest ToUpload(
-        string jobId,
-        string leaseId,
-        RawRelationsMetadata metadata,
-        IReadOnlyList<RawRelationRecord> fullRelations,
-        IReadOnlyList<RawRelationRecord> partials)
-    {
-        var isV2 = metadata.LargePrime2Bound is not null;
-        var relationsText = RawRelationsFile.Write(new RawRelationsDocument(
-            isV2 ? FileFormats.RawRelationsV2 : FileFormats.RawRelationsV1, metadata, fullRelations));
-        var partialsText = RawRelationsFile.Write(new RawRelationsDocument(
-            isV2 ? FileFormats.RawPartialsV2 : FileFormats.RawPartialsV1, metadata, partials));
-        return new UploadRequest(jobId, leaseId, relationsText, partialsText);
-    }
+    public static RelationUploadRecord ToUploadRecord(RawRelationRecord relation) => new(
+        relation.RelationId,
+        relation.Kind,
+        relation.PolyId,
+        Dec(relation.A),
+        Dec(relation.B),
+        Dec(relation.C),
+        relation.X,
+        Dec(relation.T),
+        relation.Sign,
+        relation.FactorExponents.ToDictionary(),
+        relation.ParityColumns.ToArray(),
+        relation.LargePrimes.Select(Dec).ToArray());
 
-    public static IReadOnlyList<RawRelationRecord> Parse(UploadRequest request)
-    {
-        var records = new List<RawRelationRecord>();
-        if (!string.IsNullOrWhiteSpace(request.RelationsText))
+    public static RawRelationRecord FromUploadRecord(RelationUploadRecord relation)
+        => new(
+            relation.RelationId,
+            relation.Kind,
+            relation.PolyId,
+            ParseBigInteger(relation.A),
+            ParseBigInteger(relation.B),
+            ParseBigInteger(relation.C),
+            relation.X,
+            ParseBigInteger(relation.T),
+            relation.Sign,
+            relation.FactorExponents,
+            relation.ParityColumns,
+            relation.LargePrimes.Count == 1 ? ParseBigInteger(relation.LargePrimes[0]) : null)
         {
-            records.AddRange(RawRelationsFile.Parse(request.RelationsText).Relations);
-        }
+            LargePrimes = relation.LargePrimes.Select(ParseBigInteger).ToArray(),
+        };
 
-        if (!string.IsNullOrWhiteSpace(request.PartialsText))
-        {
-            records.AddRange(RawRelationsFile.Parse(request.PartialsText).Relations);
-        }
+    private static string Dec(BigInteger value) => value.ToString(CultureInfo.InvariantCulture);
 
-        return records;
-    }
+    private static BigInteger ParseBigInteger(string value) => BigInteger.Parse(value, CultureInfo.InvariantCulture);
 }

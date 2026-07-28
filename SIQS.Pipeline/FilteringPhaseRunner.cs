@@ -13,9 +13,16 @@ internal sealed class FilteringPhaseRunner
         var partialMetadata = PhaseArtifactStore.ReadFirstRawMetadata(context.JobDirectory, "partials_*.txt");
         var fulls = PhaseArtifactStore.RawRelationSource(context.JobDirectory, "relations_*.txt");
         var partials = PhaseArtifactStore.RawRelationSource(context.JobDirectory, "partials_*.txt");
+        // Spill candidate payloads only for large composites (see FilteringSpillPolicy). The scratch
+        // file is delete-on-close, so it self-removes and never collides with artifacts. The standalone
+        // qs-filter CLI ignores this gate; it spills only with an explicit --filter-spill-dir.
+        var spillDirectory = FilteringSpillPolicy.ShouldSpill(factorBase.Metadata.TargetN)
+            ? context.JobDirectory
+            : null;
         var options = new FilteringOptions(
             LargePrimeBound: partialMetadata?.LargePrimeBound,
-            LargePrime2Bound: partialMetadata?.LargePrime2Bound);
+            LargePrime2Bound: partialMetadata?.LargePrime2Bound,
+            SpillDirectory: spillDirectory);
         var result = FilteringEngine.Run(factorBase, fulls, partials, options, context.Progress);
 
         PhaseArtifactStore.Write(context, "relations_filtered.txt",

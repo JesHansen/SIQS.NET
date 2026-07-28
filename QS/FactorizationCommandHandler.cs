@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Numerics;
+using QS.Presentation;
 using SIQS.Contracts;
 using SIQS.Pipeline;
 
@@ -10,7 +11,7 @@ internal sealed class FactorizationCommandHandler
 {
     public async Task<FactorizationCommandResult> ExecuteAsync(
         CliArguments cli,
-        IProgress<SiqsProgressEvent> progress,
+        IRunPresenter presenter,
         CancellationToken cancellationToken)
     {
         var resumeDirectory = cli.GetOptional("resume");
@@ -46,13 +47,12 @@ internal sealed class FactorizationCommandHandler
             trial = request.TrialSievePercent is not null;
         }
 
-        Console.WriteLine($"  N = {target}  ({target.ToString().Length} digits)");
-        Console.WriteLine();
+        presenter.ShowTarget(target);
 
         var watch = System.Diagnostics.Stopwatch.StartNew();
-        var result = resumeDirectory is not null
-            ? await pipeline.ResumeAsync(resumeDirectory, request, progress, cancellationToken)
-            : await pipeline.RunAsync(request!, progress, cancellationToken);
+        var result = await presenter.RunAsync(progress => resumeDirectory is not null
+            ? pipeline.ResumeAsync(resumeDirectory, request, progress, cancellationToken)
+            : pipeline.RunAsync(request!, progress, cancellationToken));
         watch.Stop();
         return new FactorizationCommandResult(target, result, artifactDirectory, trial, watch.Elapsed);
     }
@@ -122,4 +122,10 @@ internal sealed record FactorizationCommandResult(
     FactorizationJobResult Result,
     string ArtifactDirectory,
     bool TrialSieve,
-    TimeSpan Elapsed);
+    TimeSpan Elapsed)
+{
+    /// <summary>The artifact directory, defaulting to the conventional <c>runs\{jobId}</c> when none was supplied.</summary>
+    public string ResolvedArtifactDirectory => ArtifactDirectory.Length == 0
+        ? Path.Combine("runs", Result.JobId)
+        : ArtifactDirectory;
+}

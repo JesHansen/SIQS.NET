@@ -9,13 +9,13 @@ internal readonly record struct MatrixShape(int Columns, int NonZeroRows);
 /// </summary>
 internal static class CandidateReducer
 {
-    public static List<Candidate> RemoveDuplicates(List<Candidate> ordered, System.Numerics.BigInteger scaledN, FilteringCounters counters)
+    public static List<Candidate> RemoveDuplicates(List<Candidate> ordered, FilteringCounters counters)
     {
         var seen = new HashSet<(ulong, ulong)>();
         var result = new List<Candidate>();
         foreach (var candidate in ordered)
         {
-            if (seen.Add(Fingerprint.Of(candidate.DuplicateKey(scaledN))))
+            if (seen.Add(candidate.DuplicateFingerprint))
             {
                 result.Add(candidate);
             }

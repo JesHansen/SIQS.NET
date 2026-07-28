@@ -11,7 +11,7 @@ namespace SIQS.Contracts.Distributed;
 public static class DistProtocol
 {
     /// <summary>Bump on any change to the wire DTOs or the relation/parameter encoding.</summary>
-    public const int Version = 1;
+    public const int Version = 2;
 
     /// <summary>
     /// A stable digest of every job input that must be identical on both sides for the sieve to
@@ -81,10 +81,22 @@ public sealed record JobDescriptor(
 public sealed record LeaseResponse(string JobId, string LeaseId, int AStart, int AEnd, DateTimeOffset ExpiresUtc);
 
 /// <summary>
-/// Client → server upload of a completed lease: the sieved relations and partials serialized in the
-/// existing raw-relations text format.
+/// One relation in the newline-delimited JSON upload stream. Large integers use decimal strings so
+/// their representation is independent of JSON number limits and serializer-specific BigInteger support.
 /// </summary>
-public sealed record UploadRequest(string JobId, string LeaseId, string RelationsText, string PartialsText);
+public sealed record RelationUploadRecord(
+    string RelationId,
+    RelationKind Kind,
+    string PolyId,
+    string A,
+    string B,
+    string C,
+    long X,
+    string T,
+    int Sign,
+    IReadOnlyDictionary<int, int> FactorExponents,
+    IReadOnlyList<int> ParityColumns,
+    IReadOnlyList<string> LargePrimes);
 
 /// <summary>Server → client upload result after verification and dedup.</summary>
 public sealed record UploadResponse(bool Accepted, int AcceptedCount, int RejectedCount, string? Reason);

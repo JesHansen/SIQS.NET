@@ -38,9 +38,23 @@ internal sealed class RelationIngest
     }
 
     /// <summary>Useful full relations plus usable partial-prime pairs — the sieve's stop metric.</summary>
-    public long UsableCount => _tally.UsefulFullCount + _tally.UsablePairs;
+    public long UsableCount
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _tally.UsefulFullCount + _tally.UsablePairs;
+            }
+        }
+    }
 
-    public (int Accepted, int Rejected) Ingest(IReadOnlyCollection<RawRelationRecord> relations)
+    /// <summary>
+    /// Ingests one transport batch. Transport batches are deliberately not durability boundaries:
+    /// <see cref="RawRelationBatchFileSink"/> owns disk batching and flushes at its configured size,
+    /// while the distributed sieve completes the sink before filtering begins.
+    /// </summary>
+    public (int Accepted, int Rejected) Ingest(IEnumerable<RawRelationRecord> relations)
     {
         var accepted = 0;
         var rejected = 0;
@@ -58,8 +72,6 @@ internal sealed class RelationIngest
                 _sink.Add(record);
                 accepted++;
             }
-
-            _sink.Flush();
         }
 
         return (accepted, rejected);

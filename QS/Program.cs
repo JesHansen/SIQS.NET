@@ -1,7 +1,17 @@
+using System.Text;
 using QS;
+using QS.Presentation;
 using SIQS.Contracts;
 
-const string Usage = "usage: qs <number> [options] or qs --resume <run-dir> [options]";
+const string Usage = "usage: qs <number> [options] or qs --resume <run-dir> [options]\n"
+    + "  --quiet   print only the factor product (for pipelines)\n"
+    + "  --debug   print the full per-phase diagnostic output";
+
+// The default Windows console code page best-fit-maps the TUI glyphs (✔, ×, →, bars, spinner)
+// to '?' before they reach the terminal. UTF-8 output (without a BOM, so redirected output stays
+// clean) lets them through. Guarded because a detached/redirected process may have no console.
+try { Console.OutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false); }
+catch (IOException) { /* no console attached; nothing to configure */ }
 
 try
 {
@@ -12,38 +22,16 @@ try
         return 0;
     }
 
+    var cli = CliArguments.Parse(args);
+    var presenter = RunPresenterFactory.Create(cli);
+
     using var cancellation = new CancellationTokenSource();
     Console.CancelKeyPress += (_, eventArgs) => { eventArgs.Cancel = true; cancellation.Cancel(); };
-    var command = new FactorizationCommandHandler().ExecuteAsync(
-        CliArguments.Parse(args), new ConsoleReporter(), cancellation.Token);
-    var execution = await command;
-    var result = execution.Result;
-    Console.WriteLine();
-    if (execution.TrialSieve)
-    {
-        TrialSieveReporter.Write(result);
-    }
-    else if (result.Status is JobStatus.CompletedFactorFound or JobStatus.CompletedTrivialFactor)
-    {
-        Console.WriteLine($"  {execution.Target} = {string.Join(" * ", result.Factors)}");
-    }
-    else if (result.Status == JobStatus.CompletedNoFactor)
-    {
-        Console.WriteLine($"  No non-trivial factor found ({result.AttemptedDependencies} dependencies attempted).");
-    }
-    else if (result.Status == JobStatus.Canceled)
-    {
-        Console.WriteLine("  Canceled.");
-    }
-    else
-    {
-        Console.WriteLine($"  Failed: {result.ErrorSummary}");
-    }
 
-    var artifactDirectory = execution.ArtifactDirectory.Length == 0
-        ? Path.Combine("runs", result.JobId)
-        : execution.ArtifactDirectory;
-    Console.WriteLine($"  job {result.JobId} ({execution.Elapsed.TotalSeconds:F1}s) artifacts: {artifactDirectory}");
+    var execution = await new FactorizationCommandHandler().ExecuteAsync(cli, presenter, cancellation.Token);
+    presenter.ShowOutcome(execution);
+
+    var result = execution.Result;
     return execution.TrialSieve ? 0
         : result.Status is JobStatus.CompletedFactorFound or JobStatus.CompletedTrivialFactor ? 0
         : result.Status == JobStatus.CompletedNoFactor ? 2 : 1;

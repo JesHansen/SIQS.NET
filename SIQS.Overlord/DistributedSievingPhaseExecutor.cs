@@ -18,12 +18,15 @@ public sealed class DistributedSievingPhaseExecutor : IPhaseExecutor
     private readonly IPhaseExecutor _inner;
     private readonly OverlordJob _job;
     private readonly int _leaseChunkSize;
+    private readonly TimeSpan _uploadGracePeriod;
 
-    public DistributedSievingPhaseExecutor(IPhaseExecutor inner, OverlordJob job, int leaseChunkSize)
+    public DistributedSievingPhaseExecutor(
+        IPhaseExecutor inner, OverlordJob job, int leaseChunkSize, TimeSpan uploadGracePeriod)
     {
         _inner = inner;
         _job = job;
         _leaseChunkSize = leaseChunkSize;
+        _uploadGracePeriod = uploadGracePeriod;
     }
 
     public Task<PhaseResult> RunFactorBaseAsync(PhaseContext context) => _inner.RunFactorBaseAsync(context);
@@ -53,7 +56,12 @@ public sealed class DistributedSievingPhaseExecutor : IPhaseExecutor
 
         // Use the Overlord job id (also the run-directory name) so the descriptor, leases, and uploads
         // all share one id; the pipeline's internal job id in job.json is an implementation detail.
-        _job.BeginSieving(BuildDescriptor(_job.JobId, factorBase, parameters, aCount), ledger, ingest, parameters.RelationTarget);
+        _job.BeginSieving(
+            BuildDescriptor(_job.JobId, factorBase, parameters, aCount),
+            ledger,
+            ingest,
+            parameters.RelationTarget,
+            _uploadGracePeriod);
 
         var outcome = await _job.WaitForSieveCompletionAsync(context.CancellationToken);
         sink.Complete();

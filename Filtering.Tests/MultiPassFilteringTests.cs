@@ -113,6 +113,45 @@ public class MultiPassFilteringTests : IDisposable
     }
 
     [Fact]
+    public void Spilling_candidates_to_disk_is_byte_identical_to_the_in_memory_path()
+    {
+        var fb = FactorBase(8);
+        var fulls = new[]
+        {
+            Full("R00000100", 1, 4),
+            Full("R00000101", 2, 5),
+            Full("R00000102", 1, 2, 4, 5),
+        };
+        // The same mix the equivalence test uses: 1LP pairs, a 2LP triangle spanning files, a
+        // duplicate mirror re-find, and an unpaired dangling edge — so spill exercises fulls,
+        // combined partials, and deduped candidates alike.
+        var partialsA = new[]
+        {
+            Partial("R00000000", 101, new Dictionary<int, int> { [1] = 1, [3] = 1 }),
+            Partial2("R00000001", 211, 223, new Dictionary<int, int> { [2] = 1 }),
+            Partial("R00000002", 101, new Dictionary<int, int> { [3] = 1, [4] = 1 }),
+            Partial2("R00000003", 223, 227, new Dictionary<int, int> { [5] = 1 }),
+        };
+        var partialsB = new[]
+        {
+            Partial2("R00000004", 227, 211, new Dictionary<int, int> { [2] = 1, [5] = 1 }),
+            Partial("R00000005", 101, new Dictionary<int, int> { [1] = 1, [3] = 1 }) with { T = TFromId("R00000000") },
+            Partial("R00000006", 1009, new Dictionary<int, int> { [6] = 1 }),
+        };
+        var allPartials = partialsA.Concat(partialsB).ToArray();
+
+        var inMemory = FilteringEngine.Run(fb, fulls, allPartials);
+
+        var spillDir = Path.Combine(_dir, "spill");
+        var spilled = FilteringEngine.Run(
+            fb, fulls, allPartials, new FilteringOptions(SpillDirectory: spillDir));
+
+        Assert.Equal(Serialize(inMemory), Serialize(spilled));
+        // The scratch file is opened DeleteOnClose and disposed with the engine, so nothing lingers.
+        Assert.False(Directory.Exists(spillDir) && Directory.EnumerateFileSystemEntries(spillDir).Any());
+    }
+
+    [Fact]
     public void Engine_retains_no_raw_records_after_run()
     {
         var issued = new List<WeakReference>();
@@ -125,6 +164,49 @@ public class MultiPassFilteringTests : IDisposable
         Assert.NotEmpty(issued);
         Assert.NotEmpty(result.Relations.Relations);
         Assert.All(issued, weak => Assert.False(weak.IsAlive));
+    }
+
+    [Fact]
+    public void Spill_mode_does_not_retain_candidate_exponent_payloads()
+    {
+        var spillDir = Path.Combine(_dir, "spill-retain");
+        var exponents = new List<WeakReference>();
+        var result = RunSpillWithTransientExponents(spillDir, exponents);
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+
+        // The three rows form a singleton-free triangle, so all survive to output — yet the source's
+        // exponent vectors are still collectable, because spill mode streams the payload to disk and
+        // rebuilds a fresh vector per survivor rather than keeping the originals resident.
+        Assert.Equal(3, exponents.Count);
+        Assert.NotEmpty(result.Relations.Relations);
+        Assert.All(exponents, weak => Assert.False(weak.IsAlive));
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static FilteringResult RunSpillWithTransientExponents(string spillDir, List<WeakReference> exponents)
+    {
+        RawRelationRecord Fabricate(int i)
+        {
+            var record = i switch
+            {
+                0 => Full("R00000000", 1, 2),
+                1 => Full("R00000001", 2, 3),
+                2 => Full("R00000002", 1, 3),
+                _ => throw new ArgumentOutOfRangeException(nameof(i)),
+            };
+            exponents.Add(new WeakReference(record.FactorExponents));
+            return record;
+        }
+
+        var fulls = new TransientRawRelationSource(3, Fabricate, new List<WeakReference>());
+        var noPartials = new TransientRawRelationSource(
+            0, _ => throw new InvalidOperationException(), new List<WeakReference>());
+        return FilteringEngine.Run(
+            FactorBase(5), fulls, noPartials,
+            new FilteringOptions(SpillDirectory: spillDir));
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

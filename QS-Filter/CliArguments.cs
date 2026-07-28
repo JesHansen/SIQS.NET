@@ -10,7 +10,8 @@ internal sealed record FilteringCommand(
     string OutputDirectory,
     IReadOnlyList<string> RelationPaths,
     IReadOnlyList<string> PartialPaths,
-    int? MaxPartialsPerPrime)
+    int? MaxPartialsPerPrime,
+    string? SpillDirectory)
 {
     public static FilteringCommand Parse(string[] args)
     {
@@ -44,7 +45,8 @@ internal sealed record FilteringCommand(
             ExpandFiles(values, "partials"),
             GetOptional(values, "max-partials-per-prime") is { } maxPartials
                 ? int.Parse(maxPartials, CultureInfo.InvariantCulture)
-                : null);
+                : null,
+            GetOptional(values, "filter-spill-dir"));
     }
 
     private static string? GetOptional(IReadOnlyDictionary<string, List<string>> values, string key)

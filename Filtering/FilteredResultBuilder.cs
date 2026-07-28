@@ -1,3 +1,4 @@
+using System.Numerics;
 using SIQS.Contracts;
 using SIQS.Contracts.Files;
 
@@ -20,11 +21,14 @@ internal static class FilteredResultBuilder
         {
             var id = $"F{i:D8}";
             var c = survivors[i];
-            var sign = c.ExponentAtColumnZero() % 2 != 0 ? -1 : 1;
+            var payload = c.LoadPayload();
+            var exponentAtZero = payload.Exponents.TryGetExponent(0, out var e) ? e : 0;
+            var sign = exponentAtZero % 2 != 0 ? -1 : 1;
+            var largePrime = payload.LargePrimes.Length == 1 ? payload.LargePrimes[0] : (BigInteger?)null;
             relations.Add(new FilteredRelationRecord(
-                id, c.Kind, c.SourceIds, c.T, sign, c.ExponentMap(), c.Parity, c.LargePrime)
+                id, c.Kind, payload.SourceIds, payload.T, sign, payload.Exponents.ToDictionary(), c.Parity, largePrime)
             {
-                LargePrimes = c.LargePrimes,
+                LargePrimes = payload.LargePrimes,
             });
             matrix.Add(new SparseMatrixRowRecord(i, id, RemapColumns(c.Parity, columnMap)));
         }

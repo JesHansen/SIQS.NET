@@ -42,6 +42,12 @@ public static class FilteringEngine
         var factorBaseCount = factorBase.Entries.Count;
         var counters = new FilteringCounters();
 
+        // The store owns the heavy payload half of every candidate. With a spill directory it streams
+        // payloads to a scratch file, so reduction runs against only the light structural half.
+        using var store = options.SpillDirectory is { } spillDir
+            ? new SpillCandidateStore(spillDir)
+            : (CandidateStore)new InMemoryCandidateStore();
+
         var candidates = new List<Candidate>();
 
         foreach (var (_, full) in fullRelations.Enumerate())
@@ -49,11 +55,11 @@ public static class FilteringEngine
             counters.RawFull++;
             RelationValidation.ValidateColumns(full.FactorExponents, factorBaseCount);
             RelationValidation.ValidateDeclaredParity(full);
-            candidates.Add(Candidate.FromFull(full));
+            candidates.Add(store.Add(CandidateParts.FromFull(full, meta.ScaledN)));
         }
 
         candidates.AddRange(PartialCycleCombiner.Combine(
-            partials, meta.ScaledN, meta.Bound, factorBaseCount, options, counters));
+            partials, meta.ScaledN, meta.Bound, factorBaseCount, options, counters, store));
 
         // Output ordering: full relations by raw id, then combined partials by candidate key.
         var ordered = candidates
@@ -61,7 +67,7 @@ public static class FilteringEngine
             .ThenBy(c => c.OrderKey, StringComparer.Ordinal)
             .ToList();
 
-        var deduped = CandidateReducer.RemoveDuplicates(ordered, meta.ScaledN, counters);
+        var deduped = CandidateReducer.RemoveDuplicates(ordered, counters);
         CandidateReducer.RecordPrePruningTelemetry(deduped, factorBaseCount, counters);
         var survivors = CandidateReducer.PruneSingletons(deduped, factorBaseCount, counters);
         CandidateReducer.RecordRowWeightTelemetry(survivors, beforeTrim: true, counters);

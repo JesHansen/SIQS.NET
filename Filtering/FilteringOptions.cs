@@ -4,4 +4,5 @@ namespace Filtering;
 public sealed record FilteringOptions(
     int? MaxPartialsPerPrime = null,
     long? LargePrimeBound = null,
-    long? LargePrime2Bound = null);
+    long? LargePrime2Bound = null,
+    string? SpillDirectory = null);

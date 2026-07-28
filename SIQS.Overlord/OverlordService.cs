@@ -1,3 +1,5 @@
+using System.Text;
+using System.Text.Json;
 using SIQS.Contracts;
 using SIQS.Contracts.Distributed;
 using SIQS.Pipeline;
@@ -16,6 +18,9 @@ public sealed record OverlordOptions
     /// so multi-core clients stay saturated, while small enough that many volunteers can share a job.
     /// </summary>
     public int LeaseChunkSize { get; init; } = 64;
+
+    /// <summary>How long verified uploads remain accepted after the relation target is reached.</summary>
+    public TimeSpan UploadGracePeriod { get; init; } = TimeSpan.FromSeconds(30);
 }
 
 /// <summary>
@@ -39,6 +44,12 @@ public sealed class OverlordService
     {
         _runsRoot = runsRoot;
         _options = options ?? new OverlordOptions();
+        if (_options.UploadGracePeriod < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(OverlordOptions.UploadGracePeriod), "The upload grace period cannot be negative.");
+        }
+
         Directory.CreateDirectory(_runsRoot);
     }
 
@@ -71,7 +82,8 @@ public sealed class OverlordService
             var job = new OverlordJob(jobId, request.TargetN.ToString(), directory);
             job.Changed += RaiseChanged;
 
-            var executor = new DistributedSievingPhaseExecutor(new RealPhaseExecutor(), job, _options.LeaseChunkSize);
+            var executor = new DistributedSievingPhaseExecutor(
+                new RealPhaseExecutor(), job, _options.LeaseChunkSize, _options.UploadGracePeriod);
             var pipeline = new SiqsPipeline(executor);
             var normalized = request with { RunDirectory = directory };
 
@@ -98,26 +110,66 @@ public sealed class OverlordService
     public LeaseResponse? TryLease()
         => Current is { Phase: OverlordPhase.Sieving } job ? job.TryLease(_options.LeaseTtl) : null;
 
-    /// <summary>Verifies and ingests an uploaded relation batch.</summary>
-    public UploadResponse Upload(UploadRequest request)
+    /// <summary>
+    /// Reads a newline-delimited JSON relation stream, verifying and ingesting bounded batches as
+    /// they arrive. A malformed or interrupted stream is never credited as a completed lease.
+    /// </summary>
+    public async Task<UploadResponse> UploadAsync(
+        string jobId, string leaseId, Stream body, CancellationToken cancellationToken = default)
     {
         var job = Current;
-        if (job is null || job.JobId != request.JobId)
+        if (job is null || job.JobId != jobId)
         {
             return new UploadResponse(false, 0, 0, "Unknown or inactive job.");
         }
 
-        IReadOnlyList<RawRelationRecord> records;
+        var upload = job.BeginUpload(leaseId);
+        if (upload is null)
+        {
+            await body.CopyToAsync(Stream.Null, cancellationToken);
+            return new UploadResponse(false, 0, 0, "The upload grace period expired; upload discarded.");
+        }
+
+        var batch = new List<RawRelationRecord>(128);
         try
         {
-            records = RelationUploadCodec.Parse(request);
+            using var reader = new StreamReader(
+                body, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 16 * 1024, leaveOpen: true);
+            while (await reader.ReadLineAsync(cancellationToken) is { } line)
+            {
+                if (!upload.IsAccepting)
+                {
+                    upload.DiscardRemaining();
+                    await body.CopyToAsync(Stream.Null, cancellationToken);
+                    break;
+                }
+
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    continue;
+                }
+
+                var wireRecord = JsonSerializer.Deserialize<RelationUploadRecord>(line, JsonSerializerOptions.Web)
+                    ?? throw new FormatException("A relation record cannot be null.");
+                batch.Add(RelationUploadCodec.FromUploadRecord(wireRecord));
+                if (batch.Count == batch.Capacity)
+                {
+                    upload.Ingest(batch);
+                    batch.Clear();
+                }
+            }
+
+            if (batch.Count > 0)
+            {
+                upload.Ingest(batch);
+            }
+
+            return upload.Complete();
         }
-        catch (Exception ex) when (ex is FormatException or ArgumentException)
+        catch (Exception ex) when (ex is JsonException or FormatException or ArgumentException or OverflowException)
         {
             return new UploadResponse(false, 0, 0, $"Malformed upload: {ex.Message}");
         }
-
-        return job.AcceptUpload(request.LeaseId, records);
     }
 
     public void Cancel() => _cts?.Cancel();

@@ -12,7 +12,7 @@ internal static class PartialCycleCombiner
 {
     public static List<Candidate> Combine(
         IRawRelationSource partials, BigInteger scaledN, long bound, int factorBaseCount,
-        FilteringOptions options, FilteringCounters counters)
+        FilteringOptions options, FilteringCounters counters, CandidateStore store)
     {
         // Pass 1: stream every partial once, retaining only the graph skeleton. Vertices are the
         // large primes as ulong ((q, 0) for 1LP, matching the sieving-side cycle tracker), forest
@@ -92,7 +92,7 @@ internal static class PartialCycleCombiner
                 members[i] = byLocator[cycle[i]];
             }
 
-            candidates.Add(Candidate.FromCombined(members, scaledN));
+            candidates.Add(store.Add(CandidateParts.FromCombined(members, scaledN)));
         }
 
         return candidates;

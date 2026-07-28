@@ -1,4 +1,5 @@
 using System.Numerics;
+using Microsoft.AspNetCore.Mvc;
 using SIQS.Contracts.Distributed;
 using SIQS.Overlord;
 using SIQS.Pipeline;
@@ -36,8 +37,14 @@ internal static class DistributedEndpoints
         group.MapPost("/lease", (OverlordService overlord)
             => overlord.TryLease() is { } lease ? Results.Ok(lease) : Results.NoContent());
 
-        group.MapPost("/relations", (UploadRequest request, OverlordService overlord)
-            => Results.Ok(overlord.Upload(request)));
+        group.MapPost("/relations/{jobId}/{leaseId}", async (
+                string jobId,
+                string leaseId,
+                HttpRequest request,
+                OverlordService overlord,
+                CancellationToken cancellationToken)
+            => Results.Ok(await overlord.UploadAsync(jobId, leaseId, request.Body, cancellationToken)))
+            .WithMetadata(new DisableRequestSizeLimitAttribute());
 
         group.MapGet("/status", (OverlordService overlord)
             => overlord.Snapshot() is { } snapshot ? Results.Ok(snapshot) : Results.NoContent());
