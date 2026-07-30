@@ -1,13 +1,12 @@
 using System.Numerics;
 using SIQS.Contracts;
 using SIQS.Contracts.Numerics;
-using SIQS.Contracts.Text;
 
 namespace Filtering;
 
 /// <summary>
-/// Canonical representations of a relation's congruence: large-prime normalization, compact exponent
-/// columns, and the canonical congruence key used for duplicate detection and cycle combination.
+/// Canonical representations of a relation's congruence: large-prime normalization and the canonical
+/// congruence fingerprint used for duplicate detection and cycle combination.
 /// </summary>
 internal static class RelationCongruence
 {
@@ -18,31 +17,18 @@ internal static class RelationCongruence
                 ? new[] { q }
                 : Array.Empty<BigInteger>();
 
-    public static SparseExponentVector CompactExponents(IReadOnlyDictionary<int, int> exponents)
-    {
-        return new SparseExponentVector(exponents);
-    }
-
-    public static string CanonicalKey(
+    /// <summary>
+    /// Fingerprints the congruence itself: t is canonicalized to min(t mod N, N - t mod N) so a
+    /// relation and its mirror (t' = N - t, identical factorization) fingerprint identically.
+    /// </summary>
+    public static (ulong, ulong) FingerprintOf(
         BigInteger t,
         SparseExponentVector exponents,
-        IEnumerable<BigInteger> largePrimes,
+        IReadOnlyList<BigInteger> largePrimes,
         BigInteger scaledN)
     {
         var tc = IntegerMath.Mod(t, scaledN);
         tc = BigInteger.Min(tc, scaledN - tc);
-        return $"{tc}::{ExponentMapFormat.Write(exponents)}::{string.Join(' ', largePrimes)}";
+        return Fingerprint.Of(tc, exponents, largePrimes);
     }
-
-    public static string CanonicalKey(
-        BigInteger t,
-        IReadOnlyDictionary<int, int> exponents,
-        IEnumerable<BigInteger> largePrimes,
-        BigInteger scaledN)
-    {
-        var tc = IntegerMath.Mod(t, scaledN);
-        tc = BigInteger.Min(tc, scaledN - tc);
-        return $"{tc}::{ExponentMapFormat.Write(exponents)}::{string.Join(' ', largePrimes)}";
-    }
-
 }

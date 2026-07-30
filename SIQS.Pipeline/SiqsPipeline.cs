@@ -124,7 +124,8 @@ public sealed class SiqsPipeline : ISiqsPipeline
     }
 
     private static bool IsCompleted(JobStatus status)
-        => status is JobStatus.CompletedNoFactor or JobStatus.CompletedFactorFound or JobStatus.CompletedTrivialFactor;
+        => status is JobStatus.CompletedNoFactor or JobStatus.CompletedPrime
+            or JobStatus.CompletedFactorFound or JobStatus.CompletedTrivialFactor;
 
     private static string Now() => DateTimeOffset.UtcNow.ToString("O");
 

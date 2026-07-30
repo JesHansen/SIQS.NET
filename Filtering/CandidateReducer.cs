@@ -33,23 +33,37 @@ internal static class CandidateReducer
         var active = new bool[candidates.Count];
         Array.Fill(active, true);
 
-        var columnRows = new List<int>?[factorBaseCount + 1];
-        var columnCounts = new int[columnRows.Length];
+        // CSR layout of the column→rows incidence: a counting pass, a prefix sum, and a fill pass
+        // into one flat array. Columns are already validated to lie in [0, factorBaseCount].
+        var columnCounts = new int[factorBaseCount + 1];
         for (var r = 0; r < candidates.Count; r++)
         {
             foreach (var col in candidates[r].Parity)
             {
-                if ((uint)col >= (uint)columnRows.Length)
-                {
-                    Array.Resize(ref columnRows, col + 1);
-                    Array.Resize(ref columnCounts, col + 1);
-                }
-
-                columnRows[col] ??= [];
-                columnRows[col]!.Add(r);
                 columnCounts[col]++;
             }
         }
+
+        var offsets = new int[columnCounts.Length + 1];
+        for (var col = 0; col < columnCounts.Length; col++)
+        {
+            offsets[col + 1] = offsets[col] + columnCounts[col];
+        }
+
+        var rowsByColumn = new int[offsets[^1]];
+        var cursors = new int[columnCounts.Length];
+        Array.Copy(offsets, cursors, cursors.Length);
+        for (var r = 0; r < candidates.Count; r++)
+        {
+            foreach (var col in candidates[r].Parity)
+            {
+                rowsByColumn[cursors[col]++] = r;
+            }
+        }
+
+        // Reset to per-column scan cursors: rows never reactivate, so each column's list is scanned
+        // at most once in total across all pops.
+        Array.Copy(offsets, cursors, cursors.Length);
 
         var queue = new Queue<int>();
         for (var col = 0; col < columnCounts.Length; col++)
@@ -63,20 +77,15 @@ internal static class CandidateReducer
         while (queue.Count > 0)
         {
             var col = queue.Dequeue();
-            if ((uint)col >= (uint)columnCounts.Length || columnCounts[col] != 1)
+            if (columnCounts[col] != 1)
             {
                 continue;
             }
 
-            var row = FindActiveRow(columnRows[col], active);
+            var row = FindActiveRow(rowsByColumn, ref cursors[col], offsets[col + 1], active);
             if (row < 0)
             {
                 columnCounts[col] = 0;
-                continue;
-            }
-
-            if (!active[row])
-            {
                 continue;
             }
 
@@ -85,7 +94,7 @@ internal static class CandidateReducer
 
             foreach (var c in candidates[row].Parity)
             {
-                if ((uint)c < (uint)columnCounts.Length && columnCounts[c] > 0)
+                if (columnCounts[c] > 0)
                 {
                     columnCounts[c]--;
                     if (columnCounts[c] == 1)
@@ -252,19 +261,17 @@ internal static class CandidateReducer
         return sortedWeights[Math.Clamp(rank - 1, 0, sortedWeights.Count - 1)];
     }
 
-    private static int FindActiveRow(List<int>? rows, bool[] active)
+    private static int FindActiveRow(int[] rowsByColumn, ref int cursor, int end, bool[] active)
     {
-        if (rows is null)
+        while (cursor < end)
         {
-            return -1;
-        }
-
-        foreach (var row in rows)
-        {
+            var row = rowsByColumn[cursor];
             if (active[row])
             {
                 return row;
             }
+
+            cursor++;
         }
 
         return -1;

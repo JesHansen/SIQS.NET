@@ -63,8 +63,17 @@ public sealed class DistributedSievingPhaseExecutor : IPhaseExecutor
             parameters.RelationTarget,
             _uploadGracePeriod);
 
-        var outcome = await _job.WaitForSieveCompletionAsync(context.CancellationToken);
-        sink.Complete();
+        SieveOutcome outcome;
+        try
+        {
+            outcome = await _job.WaitForSieveCompletionAsync(context.CancellationToken);
+        }
+        finally
+        {
+            // Verified uploads may still sit in the sink's partial batch buffer when the wait
+            // throws (cancellation or fault); flush them so volunteer work survives on disk.
+            sink.Complete();
+        }
 
         if (outcome == SieveOutcome.Exhausted && ingest.UsableCount < parameters.RelationTarget)
         {

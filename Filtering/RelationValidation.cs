@@ -1,5 +1,4 @@
 using SIQS.Contracts;
-using SIQS.Contracts.Text;
 
 namespace Filtering;
 
@@ -31,7 +30,7 @@ internal static class RelationValidation
     public static void ValidateDeclaredParity(RawRelationRecord relation)
     {
         var expected = relation.FactorExponents.DeriveParity();
-        if (!expected.SequenceEqual(relation.ParityColumns))
+        if (!expected.Equals(relation.ParityColumns))
         {
             throw new FormatException(
                 $"Relation '{relation.RelationId}' declared parity does not match its exponents.");

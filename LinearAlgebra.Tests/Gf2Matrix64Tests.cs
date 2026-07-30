@@ -161,6 +161,57 @@ public class Gf2Matrix64Tests
         Assert.Equal(expected, actual);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(255)]
+    [InlineData(256)]
+    [InlineData(257)]
+    [InlineData(10_000)]
+    public void TransposeMultiply_matches_bitwise_reference(int length)
+    {
+        var random = new Random(0x77E1 + length);
+        var left = RandomWords(random, length);
+        var right = RandomWords(random, length);
+
+        Assert.Equal(TransposeMultiplyReference(left, right), Gf2Matrix64.TransposeMultiply(left, right));
+    }
+
+    [Theory]
+    [InlineData(3)]
+    [InlineData(300)]
+    public void TransposeMultiplyAccumulate_xors_into_existing_accumulator(int length)
+    {
+        var random = new Random(0x2B0D + length);
+        var left = RandomWords(random, length);
+        var right = RandomWords(random, length);
+        var initial = RandomWords(random, 64);
+        var reference = TransposeMultiplyReference(left, right);
+        var expected = initial.Select((word, row) => word ^ reference[row]).ToArray();
+        var actual = initial.ToArray();
+
+        Gf2Matrix64.TransposeMultiplyAccumulate(left, right, actual);
+
+        Assert.Equal(expected, actual);
+    }
+
+    private static ulong[] TransposeMultiplyReference(ulong[] left, ulong[] right)
+    {
+        var result = new ulong[64];
+        for (var i = 0; i < left.Length; i++)
+        {
+            for (var row = 0; row < 64; row++)
+            {
+                if ((left[i] & (1UL << row)) != 0)
+                {
+                    result[row] ^= right[i];
+                }
+            }
+        }
+
+        return result;
+    }
+
     private static ulong[] RandomWords(Random random, int count)
     {
         var values = new ulong[count];

@@ -31,7 +31,17 @@ public sealed class SieveCheckpointFile : IDisposable
 
     public BigInteger TargetN { get; }
     public int ACandidateCount { get; }
-    public IReadOnlySet<int> CompletedAIndices => _completed;
+    /// <summary>A snapshot of the completed A-indices; <see cref="MarkCompleted"/> keeps mutating the live set.</summary>
+    public IReadOnlySet<int> CompletedAIndices
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _completed.ToHashSet();
+            }
+        }
+    }
 
     public static SieveCheckpointFile OpenOrCreate(string directory, BigInteger targetN, int aCandidateCount)
     {

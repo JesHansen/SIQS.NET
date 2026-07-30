@@ -4,7 +4,7 @@ namespace SIQS.Contracts.Numerics;
 
 /// <summary>
 /// General-purpose arbitrary-precision integer helpers shared by the phase libraries: floor
-/// square root, perfect-square detection, and modular inverse. These are plain number-theory
+/// integer roots, perfect-power detection, and modular inverse. These are plain number-theory
 /// utilities, not SIQS-specific algorithms.
 /// </summary>
 public static class IntegerMath
@@ -64,6 +64,43 @@ public static class IntegerMath
         return root * root == n;
     }
 
+    /// <summary>Returns the floor of the positive <paramref name="degree"/>th root of a non-negative integer.</summary>
+    public static BigInteger NthRoot(BigInteger n, int degree)
+    {
+        if (n < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(n), "Integer root is undefined for negative values.");
+        }
+
+        if (degree <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(degree), "Root degree must be positive.");
+        }
+
+        if (degree == 1 || n <= 1)
+        {
+            return n;
+        }
+
+        var bitLength = checked((int)n.GetBitLength());
+        var lower = BigInteger.One << ((bitLength - 1) / degree);
+        var upper = BigInteger.One << ((bitLength + degree - 1) / degree);
+        while (lower + 1 < upper)
+        {
+            var candidate = (lower + upper) >> 1;
+            if (BigInteger.Pow(candidate, degree) <= n)
+            {
+                lower = candidate;
+            }
+            else
+            {
+                upper = candidate;
+            }
+        }
+
+        return lower;
+    }
+
     /// <summary>Returns the modular inverse of <paramref name="a"/> modulo <paramref name="m"/>.</summary>
     /// <exception cref="ArithmeticException"><paramref name="a"/> and <paramref name="m"/> are not coprime.</exception>
     public static BigInteger ModInverse(BigInteger a, BigInteger m)
@@ -91,30 +128,57 @@ public static class IntegerMath
             throw new ArgumentOutOfRangeException(nameof(m), "Modulus must be positive.");
         }
 
-        var oldR = (Int128)m;
-        var r = (Int128)Mod(a, m);
-        var oldT = Int128.Zero;
-        var t = Int128.One;
-
-        while (r != 0)
+        // For m < 2^62 every intermediate of the recurrence fits in a long: the remainders
+        // satisfy |q*r| <= oldR <= m, and the Bezout coefficients satisfy |t| <= m with
+        // |q*t| = |oldT - nextT| <= 2m < 2^63. Larger moduli fall back to Int128.
+        if (m < 1L << 62)
         {
-            var q = oldR / r;
-            (oldR, r) = (r, oldR - q * r);
-            (oldT, t) = (t, oldT - q * t);
-        }
+            var oldR = m;
+            var r = Mod(a, m);
+            var oldT = 0L;
+            var t = 1L;
 
-        if (oldR != 1)
+            while (r != 0)
+            {
+                var q = oldR / r;
+                (oldR, r) = (r, oldR - q * r);
+                (oldT, t) = (t, oldT - q * t);
+            }
+
+            if (oldR != 1)
+            {
+                throw new ArithmeticException($"{a} has no inverse modulo {m}.");
+            }
+
+            return oldT < 0 ? oldT + m : oldT;
+        }
+        else
         {
-            throw new ArithmeticException($"{a} has no inverse modulo {m}.");
-        }
+            var oldR = (Int128)m;
+            var r = (Int128)Mod(a, m);
+            var oldT = Int128.Zero;
+            var t = Int128.One;
 
-        var result = oldT % m;
-        if (result < 0)
-        {
-            result += m;
-        }
+            while (r != 0)
+            {
+                var q = oldR / r;
+                (oldR, r) = (r, oldR - q * r);
+                (oldT, t) = (t, oldT - q * t);
+            }
 
-        return (long)result;
+            if (oldR != 1)
+            {
+                throw new ArithmeticException($"{a} has no inverse modulo {m}.");
+            }
+
+            var result = oldT % m;
+            if (result < 0)
+            {
+                result += m;
+            }
+
+            return (long)result;
+        }
     }
 
     /// <summary>Non-negative remainder of <paramref name="a"/> modulo <paramref name="m"/>.</summary>

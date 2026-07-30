@@ -99,8 +99,13 @@ internal sealed class PipelineRunCoordinator
             events.Report(new SiqsProgressEvent(DateTimeOffset.UtcNow, state.JobId, phase,
                 ProgressLevel.Info, "phase completed", null, counters, null));
 
-            if (phase == SiqsPhase.FactorBase && result.Factor is { } early)
-                return CompleteTrivial(directory, state, i, early, currentRequest);
+            if (phase == SiqsPhase.FactorBase)
+            {
+                if (result.Factor is { } early)
+                    return CompleteTrivial(directory, state, i, early, currentRequest);
+                if (result.Counters.TryGetValue("input_is_prime", out var inputIsPrime) && inputIsPrime == "true")
+                    return CompletePrime(directory, state, i, currentRequest);
+            }
             if (phase == SiqsPhase.Sieving && currentRequest.TrialSievePercent is not null)
                 return CompleteSieveTrial(directory, state, i, currentRequest);
             if (phase == SiqsPhase.SquareRoot) squareRootResult = result;
@@ -230,6 +235,14 @@ internal sealed class PipelineRunCoordinator
     {
         for (var i = phaseIndex + 1; i < state.PhaseStates.Count; i++) PhaseStateMachine.Skip(state.PhaseStates[i]);
         JobStateMachine.Completed(state, JobStatus.CompletedNoFactor, null);
+        _repository.Save(directory, state);
+        return JobResultFactory.BuildResult(state, request, false, 0);
+    }
+
+    private FactorizationJobResult CompletePrime(string directory, JobState state, int phaseIndex, FactorizationRequest request)
+    {
+        for (var i = phaseIndex + 1; i < state.PhaseStates.Count; i++) PhaseStateMachine.Skip(state.PhaseStates[i]);
+        JobStateMachine.Completed(state, JobStatus.CompletedPrime, null);
         _repository.Save(directory, state);
         return JobResultFactory.BuildResult(state, request, false, 0);
     }

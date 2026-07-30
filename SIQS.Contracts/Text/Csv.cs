@@ -15,6 +15,11 @@ public static class Csv
     /// <summary>Parses a single CSV line into its fields.</summary>
     public static IReadOnlyList<string> ParseLine(string line)
     {
+        if (!line.Contains(Quote))
+        {
+            return line.Split(Delimiter);
+        }
+
         var fields = new List<string>();
         var field = new StringBuilder();
         var inQuotes = false;

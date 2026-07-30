@@ -15,6 +15,47 @@ public static class IntegerListFormat
     public static IReadOnlyList<int> ParseInts(string s)
         => Tokens(s).Select(int.Parse).ToArray();
 
+    /// <summary>
+    /// Parses a space-separated ascending column list directly into a <see cref="ParityColumnSet"/>
+    /// without intermediate strings or defensive copies.
+    /// </summary>
+    public static ParityColumnSet ParseParityColumns(ReadOnlySpan<char> s)
+    {
+        var count = 0;
+        var pos = 0;
+        while (TryNextToken(s, ref pos, out _, out _))
+        {
+            count++;
+        }
+
+        var columns = count == 0 ? Array.Empty<int>() : new int[count];
+        pos = 0;
+        var index = 0;
+        while (TryNextToken(s, ref pos, out var start, out var end))
+        {
+            columns[index++] = int.Parse(s[start..end]);
+        }
+
+        return ParityColumnSet.FromOwned(columns);
+    }
+
+    private static bool TryNextToken(ReadOnlySpan<char> s, ref int pos, out int start, out int end)
+    {
+        while (pos < s.Length && (s[pos] == ' ' || s[pos] == '\t'))
+        {
+            pos++;
+        }
+
+        start = pos;
+        while (pos < s.Length && s[pos] != ' ' && s[pos] != '\t')
+        {
+            pos++;
+        }
+
+        end = pos;
+        return end > start;
+    }
+
     /// <summary>Parses a space-separated list of 64-bit integers.</summary>
     public static IReadOnlyList<long> ParseLongs(string s)
         => Tokens(s).Select(long.Parse).ToArray();

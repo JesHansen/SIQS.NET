@@ -4,6 +4,7 @@ namespace LinearAlgebra;
 public static class Gf2Matrix64
 {
     private const int ApplyToBlockVectorByteTableThreshold = 64;
+    private const int TransposeMultiplyByteTableThreshold = 256;
 
     public static ulong[] Identity
     {
@@ -254,24 +255,86 @@ public static class Gf2Matrix64
 
     public static ulong[] TransposeMultiply(ReadOnlySpan<ulong> left, ReadOnlySpan<ulong> right)
     {
+        var result = new ulong[64];
+        TransposeMultiplyAccumulate(left, right, result);
+        return result;
+    }
+
+    public static void TransposeMultiplyAccumulate(
+        ReadOnlySpan<ulong> left,
+        ReadOnlySpan<ulong> right,
+        Span<ulong> accumulator)
+    {
         if (left.Length != right.Length)
         {
             throw new ArgumentException("Input vectors must have the same length.", nameof(right));
         }
 
-        var result = new ulong[64];
+        Require64(accumulator, nameof(accumulator));
+
+        if (left.Length < TransposeMultiplyByteTableThreshold)
+        {
+            TransposeMultiplyByBits(left, right, accumulator);
+            return;
+        }
+
+        // Same byte-table idea as ApplyToBlockVector, run in reverse: accumulate right[i] into the
+        // table slot addressed by each byte of left[i] (8 XORs per word instead of one per set bit),
+        // then fold each table entry into the result rows named by its byte value's set bits.
+        Span<ulong> table = stackalloc ulong[8 * 256];
+        table.Clear();
+        for (var i = 0; i < left.Length; i++)
+        {
+            var word = left[i];
+            var value = right[i];
+            table[(0 << 8) | (byte)word] ^= value;
+            table[(1 << 8) | (byte)(word >> 8)] ^= value;
+            table[(2 << 8) | (byte)(word >> 16)] ^= value;
+            table[(3 << 8) | (byte)(word >> 24)] ^= value;
+            table[(4 << 8) | (byte)(word >> 32)] ^= value;
+            table[(5 << 8) | (byte)(word >> 40)] ^= value;
+            table[(6 << 8) | (byte)(word >> 48)] ^= value;
+            table[(7 << 8) | (byte)(word >> 56)] ^= value;
+        }
+
+        for (var chunk = 0; chunk < 8; chunk++)
+        {
+            var tableOffset = chunk << 8;
+            var rowOffset = chunk << 3;
+            for (var byteValue = 1; byteValue < 256; byteValue++)
+            {
+                var entry = table[tableOffset + byteValue];
+                if (entry == 0)
+                {
+                    continue;
+                }
+
+                var bits = byteValue;
+                while (bits != 0)
+                {
+                    var bit = System.Numerics.BitOperations.TrailingZeroCount(bits);
+                    accumulator[rowOffset + bit] ^= entry;
+                    bits &= bits - 1;
+                }
+            }
+        }
+    }
+
+    private static void TransposeMultiplyByBits(
+        ReadOnlySpan<ulong> left,
+        ReadOnlySpan<ulong> right,
+        Span<ulong> accumulator)
+    {
         for (var i = 0; i < left.Length; i++)
         {
             var word = left[i];
             while (word != 0)
             {
                 var bit = System.Numerics.BitOperations.TrailingZeroCount(word);
-                result[bit] ^= right[i];
+                accumulator[bit] ^= right[i];
                 word &= word - 1;
             }
         }
-
-        return result;
     }
 
     public static bool IsZero(ReadOnlySpan<ulong> matrix)

@@ -139,6 +139,10 @@ internal sealed class NormalPresenter : IRunPresenter, IProgress<SiqsProgressEve
         {
             AnsiConsole.MarkupLine($"[yellow]no non-trivial factor found[/] [grey]({result.AttemptedDependencies} dependencies attempted)[/]");
         }
+        else if (result.Status == JobStatus.CompletedPrime)
+        {
+            AnsiConsole.MarkupLine($"[green]{execution.Target} is prime[/]");
+        }
         else if (result.Status == JobStatus.Canceled)
         {
             AnsiConsole.MarkupLine("[yellow]canceled[/]");

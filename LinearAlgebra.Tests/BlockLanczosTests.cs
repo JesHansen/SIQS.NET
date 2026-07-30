@@ -49,19 +49,32 @@ public class BlockLanczosTests
     }
 
     [Fact]
-    public void Zero_rows_do_not_exhaust_dependency_budget_before_lanczos()
+    public void Zero_rows_are_emitted_as_free_dependencies_before_lanczos()
     {
-        var rows = Enumerable.Repeat(RelationRow.Empty, 32)
+        var rows = Enumerable.Repeat(RelationRow.Empty, 1)
             .Concat(new[] { new RelationRow(0, 2), new RelationRow(1, 2), new RelationRow(0, 1) })
             .ToArray();
 
         var result = BlockLanczos.Solve(rows, columnCount: 3, maxDependencies: 2);
 
-        Assert.Single(result.Dependencies);
-        Assert.Contains(result.Dependencies, dep => dep.RowIds.SequenceEqual(new[] { 32, 33, 34 }));
-        Assert.DoesNotContain(result.Dependencies, dep => dep.Count == 1 && dep.RowIds[0] < 32);
+        Assert.Equal(2, result.Dependencies.Count);
+        Assert.Equal(new[] { 0 }, result.Dependencies[0].RowIds);
+        Assert.Contains(result.Dependencies, dep => dep.RowIds.SequenceEqual(new[] { 1, 2, 3 }));
         Assert.True(result.LanczosRuns > 0);
-        Assert.Equal(result.Dependencies.Count, result.LanczosDependencies);
+        Assert.Equal(1, result.LanczosDependencies);
+    }
+
+    [Fact]
+    public void Zero_rows_respect_the_total_dependency_budget()
+    {
+        var rows = Enumerable.Repeat(RelationRow.Empty, 4).ToArray();
+
+        var result = BlockLanczos.Solve(rows, columnCount: 0, maxDependencies: 2);
+
+        Assert.Equal(2, result.Dependencies.Count);
+        Assert.All(result.Dependencies, dependency => Assert.Single(dependency.RowIds));
+        Assert.Equal(0, result.LanczosRuns);
+        Assert.Equal(0, result.LanczosDependencies);
     }
 
     [Theory]

@@ -33,6 +33,7 @@ internal sealed class QuietPresenter : IRunPresenter
         var reason = result.Status switch
         {
             JobStatus.CompletedNoFactor => "no non-trivial factor found",
+            JobStatus.CompletedPrime => "input is prime",
             JobStatus.Canceled => "canceled",
             _ when execution.TrialSieve => "trial sieve produced no factors",
             _ => result.ErrorSummary ?? "factorization failed",

@@ -294,14 +294,14 @@ internal static class SieveRunCoordinator
         long sharedPartialCount,
         long sharedUsablePairs)
     {
-        var full = Volatile.Read(ref sharedFullCount);
+        var full = sharedFullCount;
         if (parameters.TrialRawRelationTarget is { } rawTarget &&
-            full + Volatile.Read(ref sharedPartialCount) >= rawTarget)
+            full + sharedPartialCount >= rawTarget)
         {
             return true;
         }
 
-        return Volatile.Read(ref sharedUsefulFullCount) + Volatile.Read(ref sharedUsablePairs) >= parameters.RelationTarget;
+        return sharedUsefulFullCount + sharedUsablePairs >= parameters.RelationTarget;
     }
 
     /// <summary>

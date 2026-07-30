@@ -14,6 +14,11 @@ internal static class FactorBasePrecheck
 
     public static FactorsDocument? TryFind(BigInteger targetN, bool allowTinyTrialDivision)
     {
+        if (targetN == 2)
+        {
+            return EarlyFactor.Prime(targetN);
+        }
+
         if (targetN.IsEven)
         {
             return EarlyFactor.Create(targetN, 2, "even_target");
@@ -26,6 +31,11 @@ internal static class FactorBasePrecheck
 
         foreach (var prime in PrecheckPrimes)
         {
+            if (targetN == prime)
+            {
+                return EarlyFactor.Prime(targetN);
+            }
+
             if (targetN % prime == 0)
             {
                 return EarlyFactor.Create(targetN, prime, "small_prime_factor");
@@ -33,20 +43,50 @@ internal static class FactorBasePrecheck
         }
 
         var squareRoot = IntegerMath.Sqrt(targetN);
-        if (!allowTinyTrialDivision || squareRoot > TinyInputTrialDivisionBound)
+        if (allowTinyTrialDivision && squareRoot <= TinyInputTrialDivisionBound)
         {
-            return null;
+            foreach (var prime in PrimeSieve.PrimesUpTo((long)squareRoot).Where(prime => prime > PrecheckBound))
+            {
+                if (targetN % prime == 0)
+                {
+                    return EarlyFactor.Create(targetN, prime, "tiny_input_trial_division");
+                }
+            }
+
+            return EarlyFactor.Prime(targetN);
         }
 
-        foreach (var prime in PrimeSieve.PrimesUpTo((long)squareRoot).Where(prime => prime > PrecheckBound))
+        // Baillie-PSW has no known counterexample, so a positive result is trusted as proof of
+        // primality at every input size and terminates the job before any SIQS work begins.
+        if (Primality.IsBailliePswProbablePrime(targetN))
         {
-            if (targetN % prime == 0)
-            {
-                return EarlyFactor.Create(targetN, prime, "tiny_input_trial_division");
-            }
+            return EarlyFactor.Prime(targetN);
+        }
+
+        if (TryFindPerfectPowerFactor(targetN, out root))
+        {
+            return EarlyFactor.Create(targetN, root, "perfect_power");
         }
 
         return null;
+    }
+
+    private static bool TryFindPerfectPowerFactor(BigInteger targetN, out BigInteger factor)
+    {
+        var bitLength = checked((int)targetN.GetBitLength());
+        foreach (var exponent in PrimeSieve.PrimesUpTo(bitLength).Where(exponent => exponent >= 3))
+        {
+            var degree = checked((int)exponent);
+            var root = IntegerMath.NthRoot(targetN, degree);
+            if (BigInteger.Pow(root, degree) == targetN)
+            {
+                factor = root;
+                return true;
+            }
+        }
+
+        factor = BigInteger.Zero;
+        return false;
     }
 }
 
@@ -69,5 +109,23 @@ internal static class EarlyFactor
                     Factor1: factor,
                     Factor2: targetN / factor,
                     Reason: reason),
+            ]);
+
+    public static FactorsDocument Prime(BigInteger targetN)
+        => new(
+            targetN,
+            1,
+            targetN,
+            DependencyCount: 0,
+            Results:
+            [
+                new FactorResultRecord(
+                    DependencyId: "precheck",
+                    Status: FactorizationStatus.InputPrime,
+                    GcdMinus: null,
+                    GcdPlus: null,
+                    Factor1: null,
+                    Factor2: null,
+                    Reason: "input_is_prime"),
             ]);
 }

@@ -4,7 +4,7 @@ using SIQS.Contracts.Numerics;
 namespace Sieving;
 
 /// <summary>
-/// Splits a post-trial-division residual into two distinct large primes, both strictly above the
+/// Splits a post-trial-division residual into two large primes (which may be equal), both strictly above the
 /// factor-base bound and at or below the two-large-prime bound. Delegates the actual factoring to
 /// <see cref="CofactorFactorizer"/> and primality to <see cref="CofactorPrimality64"/>.
 /// </summary>

@@ -382,7 +382,11 @@ public static class PolynomialGenerator
             var numerator = b * b - fb.ScaledN;
             if (numerator % a != 0)
             {
-                continue; // invalid candidate; reject
+                // B is built from modular roots of N, so B² ≡ N (mod A) holds by construction.
+                // Skipping a member here would leave previousGray stale and silently corrupt the
+                // incremental flip metadata of the next member, so a violation must be fatal.
+                throw new InvalidOperationException(
+                    $"Polynomial family invariant violated: B² - N is not divisible by A (A = {a}, B = {b}).");
             }
 
             int? flipIndex = null;

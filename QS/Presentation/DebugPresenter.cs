@@ -37,6 +37,10 @@ internal sealed class DebugPresenter : IRunPresenter
         {
             Console.WriteLine($"  No non-trivial factor found ({result.AttemptedDependencies} dependencies attempted).");
         }
+        else if (result.Status == JobStatus.CompletedPrime)
+        {
+            Console.WriteLine($"  {execution.Target} is prime.");
+        }
         else if (result.Status == JobStatus.Canceled)
         {
             Console.WriteLine("  Canceled.");

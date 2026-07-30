@@ -34,7 +34,7 @@ try
     var result = execution.Result;
     return execution.TrialSieve ? 0
         : result.Status is JobStatus.CompletedFactorFound or JobStatus.CompletedTrivialFactor ? 0
-        : result.Status == JobStatus.CompletedNoFactor ? 2 : 1;
+        : result.Status is JobStatus.CompletedNoFactor or JobStatus.CompletedPrime ? 2 : 1;
 }
 catch (Exception ex) when (ex is FormatException or ArgumentException or InvalidOperationException
     or IOException or UnauthorizedAccessException or System.Text.Json.JsonException)

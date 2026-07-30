@@ -80,7 +80,10 @@ internal sealed class LargePrimeBuckets
             Unsafe.Add(ref sieve0, (int)(packed >> 8)) += (byte)packed;
         }
 
-        foreach (var hit in _overflow?[bucket.Value] ?? []) Unsafe.Add(ref sieve0, hit.Offset.Value) += hit.LogCredit.Value;
+        if (_overflow?[bucket.Value] is { } overflowHits)
+        {
+            foreach (var hit in overflowHits) Unsafe.Add(ref sieve0, hit.Offset.Value) += hit.LogCredit.Value;
+        }
     }
 
     public void CollectCandidateHits(BucketIndex bucket, ReadOnlySpan<int> candidateOffsets, List<int>[] primeHits)
@@ -96,10 +99,13 @@ internal sealed class LargePrimeBuckets
             if (match >= 0) primeHits[match].Add(_primeIndexes[baseIndex + local]);
         }
 
-        foreach (var hit in _overflow?[bucket.Value] ?? [])
+        if (_overflow?[bucket.Value] is { } overflowHits)
         {
-            var match = candidateOffsets.BinarySearch(hit.Offset.Value);
-            if (match >= 0) primeHits[match].Add(hit.PrimeIndex.Value);
+            foreach (var hit in overflowHits)
+            {
+                var match = candidateOffsets.BinarySearch(hit.Offset.Value);
+                if (match >= 0) primeHits[match].Add(hit.PrimeIndex.Value);
+            }
         }
     }
 

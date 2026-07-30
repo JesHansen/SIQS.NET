@@ -124,8 +124,8 @@ internal readonly record struct CandidateParts(
         // Key on the congruence itself, not on source ids: the sieve can rediscover the same lattice
         // point under a mirrored polynomial (t' = N - t, identical factorization), and such re-finds
         // only yield trivial x = +-y dependencies.
-        var fingerprint = Fingerprint.Of(
-            RelationCongruence.CanonicalKey(payload.T, payload.Exponents, payload.LargePrimes, scaledN));
+        var fingerprint = RelationCongruence.FingerprintOf(
+            payload.T, payload.Exponents, payload.LargePrimes, scaledN);
         return new CandidateParts(kind, payload.Exponents.DeriveParity(), orderKey, cycleLength, fingerprint, payload);
     }
 }

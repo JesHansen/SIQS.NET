@@ -16,11 +16,21 @@ internal sealed class FactorBasePhaseRunner
             request.FactorBase.AllowTinyInputTrialDivision);
         var result = FactorBaseGenerator.Generate(options, context.Progress);
 
-        if (result.FoundEarlyFactor)
+        if (result.HasEarlyOutcome)
         {
-            var factors = result.EarlyFactors!;
+            var factors = result.EarlyOutcome!;
             PhaseArtifactStore.Write(context, "factors.txt", FactorsFile.Write(factors));
             var row = factors.Results[0];
+            if (row.Status == FactorizationStatus.InputPrime)
+            {
+                return PhaseResult.Completed(SiqsPhase.FactorBase, new[] { "factors.txt" },
+                    new Dictionary<string, string>
+                    {
+                        ["reason"] = row.Reason ?? string.Empty,
+                        ["input_is_prime"] = "true",
+                    });
+            }
+
             return PhaseResult.Completed(SiqsPhase.FactorBase, new[] { "factors.txt" },
                 new Dictionary<string, string> { ["reason"] = row.Reason ?? string.Empty },
                 new PhaseFactorOutcome(row.Factor1!.Value, row.Factor2!.Value));

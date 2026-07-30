@@ -23,17 +23,19 @@ internal static class TrialSieveReporter
         var target = Get(phase, "trial_raw_target");
         var usable = Get(phase, "usable_relations");
         var full = Get(phase, "full_relations");
+        var usefulFull = Math.Max(0, full - Get(phase, "zero_parity_full_relations"));
         var partial = Get(phase, "partial_relations");
         var polynomials = Get(phase, "polynomials");
         var elapsed = phase.ElapsedSeconds ?? 0.0;
         var rawPerSecond = elapsed > 0 ? raw / elapsed : 0.0;
         var rawPerPolynomial = polynomials > 0 ? (double)raw / polynomials : 0.0;
-        var pairing = usable - full;
-        var pairingRate = partial > 0 ? 100.0 * pairing / partial : 0.0;
+        var cycleContribution = Math.Max(0, usable - usefulFull);
+        var cycleRate = partial > 0 ? 100.0 * cycleContribution / partial : 0.0;
 
-        Console.WriteLine($"  [trial sieve]  {raw}/{target} raw relations sampled; {usable} usable relations observed for full target {Get(phase, "relations_needed")}");
+        Console.WriteLine($"  [trial sieve]  stopped after {raw}/{target} raw relations; {usable} usable so far versus normal target {Get(phase, "relations_needed")}");
+        Console.WriteLine("  [trial meaning]the requested percent sizes this raw-relation stop budget; it is not a percent of polynomials, elapsed time, or total sieve work");
         Console.WriteLine($"  [sample rate]  {rawPerSecond:F1} raw rel/s, {rawPerPolynomial:F3} raw rel/poly, {(polynomials > 0 ? elapsed / polynomials * 1000.0 : 0.0):F3} ms/poly");
-        Console.WriteLine($"  [sample yield] { (polynomials > 0 ? (double)full / polynomials : 0.0):F3} full rel/poly; partial pairing contribution {pairing}/{partial} ({pairingRate:F2}%)");
+        Console.WriteLine($"  [sample yield] { (polynomials > 0 ? (double)usefulFull / polynomials : 0.0):F3} useful full rel/poly; closed-cycle contribution {cycleContribution}/{partial} partials ({cycleRate:F2}%)");
 
         var one = Get(phase, "one_large_prime_partials");
         var two = Get(phase, "two_large_prime_partials");

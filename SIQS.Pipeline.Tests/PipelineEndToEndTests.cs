@@ -78,6 +78,53 @@ public class PipelineEndToEndTests : IDisposable
         Assert.False(File.Exists(Path.Combine(_dir, "factor_base.txt")));
     }
 
+    [Fact]
+    public async Task Prime_input_short_circuits_with_a_distinct_status()
+    {
+        var pipeline = new SiqsPipeline();
+        var result = await pipeline.RunAsync(
+            new FactorizationRequest(new BigInteger(97)) { RunDirectory = _dir }, null, CancellationToken.None);
+
+        Assert.Equal(JobStatus.CompletedPrime, result.Status);
+        Assert.False(result.FactorFound);
+        Assert.Empty(result.Factors);
+        Assert.True(File.Exists(Path.Combine(_dir, "factors.txt")));
+        Assert.False(File.Exists(Path.Combine(_dir, "factor_base.txt")));
+    }
+
+    [Fact]
+    public async Task Fixed_witness_composite_above_the_deterministic_bound_is_factored()
+    {
+        var target = BigInteger.Parse("3317044064679887385961981");
+        var pipeline = new SiqsPipeline();
+        var result = await pipeline.RunAsync(
+            new FactorizationRequest(target) { RunDirectory = _dir }, null, CancellationToken.None);
+
+        Assert.Equal(JobStatus.CompletedFactorFound, result.Status);
+        Assert.True(result.FactorFound);
+        Assert.Equal(target, result.Factors[0] * result.Factors[1]);
+        Assert.Contains(BigInteger.Parse("1287836182261"), result.Factors);
+        Assert.Contains(BigInteger.Parse("2575672364521"), result.Factors);
+        Assert.True(File.Exists(Path.Combine(_dir, "factors.txt")));
+        Assert.True(File.Exists(Path.Combine(_dir, "factor_base.txt")));
+    }
+
+    [Fact]
+    public async Task Odd_prime_power_short_circuits_with_a_nontrivial_factor()
+    {
+        var target = BigInteger.Parse(
+            "673567582867833621877398681261506467469364817364484181307694303405612734078761");
+        var pipeline = new SiqsPipeline();
+        var result = await pipeline.RunAsync(
+            new FactorizationRequest(target) { RunDirectory = _dir }, null, CancellationToken.None);
+
+        Assert.Equal(JobStatus.CompletedTrivialFactor, result.Status);
+        Assert.True(result.FactorFound);
+        Assert.Equal(target, result.Factors[0] * result.Factors[1]);
+        Assert.Contains(BigInteger.Parse("87658437637587659584646521"), result.Factors);
+        Assert.False(File.Exists(Path.Combine(_dir, "factor_base.txt")));
+    }
+
     private sealed class SynchronousProgress : IProgress<SiqsProgressEvent>
     {
         private readonly List<SiqsProgressEvent> _sink;

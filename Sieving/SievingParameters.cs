@@ -30,13 +30,8 @@ public sealed record SievingParameters(
     internal const double C70ToC99RelationTargetSurplusFraction = 0.01;
     internal const int C100PlusMinimumRelationTargetSurplus = 10_000;
     internal const int C70ToC99MinimumRelationTargetSurplus = 2_048;
-    internal const long C110SieveHalfInterval = 4_194_304;
-    internal const long C110LargePrimeBound = 60_000_000;
-    internal const long C110LargePrime2Bound = 60_000_000;
-    internal const long C110LargePrime2ThresholdBound = 60_000_000;
-    internal const int C110ErrorMargin = 48;
-    internal const int C110APrimeWindowSize = 120;
-    internal const int TwoLargePrimeDefaultMinDigits = 100;
+    internal const long C100LargePrimeBound = 1_000_000_000;
+    internal const int TwoLargePrimeDefaultMinDigits = 110;
 
     internal bool DisableVectorScan { get; init; }
 
@@ -72,43 +67,40 @@ public sealed record SievingParameters(
         var b = factorBase.Metadata.Bound;
         var fb = factorBase.Entries.Count;
         var digits = BigInteger.Abs(factorBase.Metadata.TargetN).ToString().Length;
-        var useC110TunedDefaults = digits >= 110;
 
         var relationTarget = DefaultRelationTarget(fb, digits);
-        var sieveHalfInterval = SelectSieveHalfInterval(digits, b, useC110TunedDefaults);
+        var sieveHalfInterval = SelectSieveHalfInterval(digits);
         var aPrimeCount = SelectAPrimeCount(digits);
         var sieveBlockSize = SelectSieveBlockSize(digits);
         var polynomialSupplyMultiplier = SelectPolynomialSupplyMultiplier(digits);
-        var largePrimeBound = SelectLargePrimeBound(digits, b, useC110TunedDefaults);
+        var largePrimeBound = SelectLargePrimeBound(digits, b);
         // A wide window is essential: with a narrow band of a-primes the polynomials are so
         // correlated that different (A, B) pairs rediscover the same smooth values (mirrored
         // duplicate relations), and the a-columns co-occur in enough relations to create
         // parity-column dependencies that leave Block Lanczos almost no extractable nullspace.
-        var aPrimeWindowSize = useC110TunedDefaults
-            ? C110APrimeWindowSize
-            : SelectAPrimeWindowSize(
-                aPrimeCount,
-                relationTarget,
-                polynomialSupplyMultiplier,
-                long.MaxValue,
-                Math.Max(16, 16 * aPrimeCount));
+        var aPrimeWindowSize = SelectAPrimeWindowSize(
+            aPrimeCount,
+            relationTarget,
+            polynomialSupplyMultiplier,
+            long.MaxValue,
+            Math.Max(16, 16 * aPrimeCount));
         var polynomialCount = AvailablePolynomialSupply(aPrimeWindowSize, aPrimeCount);
 
-        var largePrime2Bound = SelectLargePrime2Bound(digits, largePrimeBound, useC110TunedDefaults);
-        var largePrime2ThresholdBound = SelectLargePrime2ThresholdBound(digits, largePrime2Bound, useC110TunedDefaults);
+        var largePrime2Bound = SelectLargePrime2Bound(b);
+        var largePrime2ThresholdBound = SelectLargePrime2ThresholdBound(largePrime2Bound);
 
         return new SievingParameters(
             SieveHalfInterval: sieveHalfInterval,
             PolynomialCount: polynomialCount,
             RelationTarget: relationTarget,
             LargePrimeBound: largePrimeBound,
-            ErrorMargin: SelectErrorMargin(digits, useC110TunedDefaults),
+            ErrorMargin: SelectErrorMargin(digits),
             OutputBatchSize: 10_000,
             APrimeCount: aPrimeCount,
             APrimeWindowSize: aPrimeWindowSize,
             SieveBlockSize: sieveBlockSize,
-            BucketLargePrimeCutoff: digits >= 89 ? sieveBlockSize : 0,
-            ResieveLargePrimeCutoff: digits >= 89 ? sieveBlockSize / 4 : 0,
+            BucketLargePrimeCutoff: SelectBucketLargePrimeCutoff(digits),
+            ResieveLargePrimeCutoff: SelectResieveLargePrimeCutoff(digits),
             EnableTwoLargePrimes: digits >= TwoLargePrimeDefaultMinDigits,
             LargePrime2Bound: largePrime2Bound,
             LargePrime2ThresholdBound: largePrime2ThresholdBound,
@@ -116,72 +108,86 @@ public sealed record SievingParameters(
     }
 
     // ── Deterministic default tuning selectors ──────────────────────────────────────────────
-    // Each selector is a pure function of the digit count (and the factor-base bound / C110 flag
-    // where relevant). They preserve the exact banded values of the v1 defaults; the bands are
-    // intentionally fine-grained and sometimes overlap, so they are kept as explicit expressions
-    // rather than a single profile table. See Instructions/Sieving.md.
+    // Each selector is a pure function of the digit count (and the factor-base bound where
+    // relevant). The measured C13-C115 profile is deliberately monotonic: larger inputs may move
+    // to a higher tier, but never back to a smaller one. See the 2026-07-30 tuning report.
 
     /// <summary>
-    /// Sieve half-interval M. C110+ uses the tuned constant; below that it is banded by digit size,
-    /// with a factor-base-scaled clamp for the small-input tail (&lt; 70 digits).
+    /// Sieve half-interval M. Powers of two approximate a log-linear rise from 128 at C13 to
+    /// 1,048,576 at C40, followed by measured plateaus through C115.
     /// </summary>
-    internal static long SelectSieveHalfInterval(int digits, long bound, bool useC110TunedDefaults)
-        => useC110TunedDefaults ? C110SieveHalfInterval
-            : digits >= 105 ? 16_777_216
-            : digits is >= 100 and <= 104 ? 8_388_608
-            : digits >= 89 ? 1_048_576
-            : digits >= 78 && digits <= 81 ? 524_288
-            : digits >= 70 && digits <= 77 ? 393_216
-            : digits >= 82 ? 393_216
-            : Math.Clamp(20L * bound, 32_768, 16_777_216);
+    internal static long SelectSieveHalfInterval(int digits)
+        => digits >= 113 ? 33_554_432
+            : digits >= 111 ? 16_777_216
+            : digits >= 106 ? 8_388_608
+            : digits >= 104 ? 4_194_304
+            : digits >= 101 ? 2_097_152
+            : digits >= 40 ? 1_048_576
+            : 1L << (7 + ((13 * Math.Max(0, digits - 13) + 13) / 27));
 
     /// <summary>Number of factor-base primes whose product forms A, by digit size.</summary>
     internal static int SelectAPrimeCount(int digits)
-        => digits <= 45 ? 3 : digits <= 52 ? 4 : digits <= 69 ? 5 : digits <= 77 ? 6 : digits <= 87 ? 7 : digits >= 100 ? 10 : 9;
+        => digits <= 19 ? 2
+            : digits <= 47 ? 3
+            : digits <= 61 ? 5
+            : digits <= 62 ? 6
+            : digits <= 77 ? 7
+            : digits <= 87 ? 8
+            : digits <= 103 ? 9
+            : 10;
 
-    /// <summary>Cache block size for block sieving; 0 selects the single-block fallback.</summary>
+    /// <summary>Cache block size for block sieving, using the measured monotonic C13-C115 tiers.</summary>
     internal static int SelectSieveBlockSize(int digits)
-        => digits >= 89 ? 1_048_576 : digits >= 70 && digits <= 81 ? 524_288 : 0;
+        => digits >= 70 ? 524_288
+            : 262_144;
+
+    /// <summary>Prime cutoff for bucket sieving; enabled where the factor base is wide enough to benefit.</summary>
+    internal static int SelectBucketLargePrimeCutoff(int digits)
+        => digits >= 85 ? 1_048_576 : 0;
+
+    /// <summary>Prime cutoff for candidate resieving; enabled with the bucket tier.</summary>
+    internal static int SelectResieveLargePrimeCutoff(int digits)
+        => digits >= 85 ? 262_144 : 0;
 
     /// <summary>Target polynomial supply multiplier relative to the relation target.</summary>
     internal static long SelectPolynomialSupplyMultiplier(int digits)
-        => digits >= 105 ? 64L : digits >= 100 ? 30L : 10L;
+        => digits >= 105 ? 64L
+            : digits >= 100 ? 30L
+            : digits >= 20 ? 10L
+            : 1L;
 
-    /// <summary>Single-large-prime bound, as a multiple of the factor-base bound (C110+ uses the tuned constant).</summary>
-    internal static long SelectLargePrimeBound(int digits, long bound, bool useC110TunedDefaults)
-        => useC110TunedDefaults ? C110LargePrimeBound
-            : digits >= 105 ? 512L * bound
-            : digits >= 100 ? 384L * bound
-            : digits >= 89 ? 192L * bound
-            : digits >= 70 && digits <= 81 ? 128L * bound
-            : 64L * bound;
+    /// <summary>Single-large-prime bound, as a multiple of the factor-base bound below C100.</summary>
+    internal static long SelectLargePrimeBound(int digits, long bound)
+        => digits >= 100 ? C100LargePrimeBound
+            : digits >= 75 ? 192L * bound
+            : digits >= 70 ? 128L * bound
+            : digits >= 64 ? 64L * bound
+            : digits >= 60 ? 32L * bound
+            : digits >= 59 ? 16L * bound
+            : 8L * bound;
 
-    /// <summary>Log-credit scan error margin, by digit size (C110+ uses the tuned constant).</summary>
-    internal static int SelectErrorMargin(int digits, bool useC110TunedDefaults)
-        => useC110TunedDefaults ? C110ErrorMargin
-            : digits >= 105 ? 48
-            : digits >= 100 ? 56
-            : digits >= 70 && digits <= 81 ? 40
+    /// <summary>Log-credit scan error margin, by digit size.</summary>
+    internal static int SelectErrorMargin(int digits)
+        => digits >= 104 ? 48
             : digits >= 89 ? 36
-            : 24;
+            : digits >= 75 ? 24
+            : digits >= 70 ? 16
+            : digits >= 65 ? 8
+            : 0;
 
-    /// <summary>Two-large-prime relation bound (LP2). C110+ uses the tuned constant; 80–84 caps at 5M.</summary>
-    internal static long SelectLargePrime2Bound(int digits, long largePrimeBound, bool useC110TunedDefaults)
-        => useC110TunedDefaults ? C110LargePrime2Bound
-            : digits is >= 80 and <= 84 ? Math.Min(5_000_000L, largePrimeBound)
-            : largePrimeBound;
+    /// <summary>
+    /// Two-large-prime relation bound (LP2). The measured C110 full factorization used 1.5 times
+    /// the factor-base bound: wide enough to add useful graph cycles without creating the much
+    /// larger sparse graph produced by the single-large-prime bound.
+    /// </summary>
+    internal static long SelectLargePrime2Bound(long factorBaseBound)
+        => checked(factorBaseBound + factorBaseBound / 2 + factorBaseBound % 2);
 
-    /// <summary>Two-large-prime residual threshold bound. Finely banded; never exceeds LP2.</summary>
-    internal static long SelectLargePrime2ThresholdBound(int digits, long largePrime2Bound, bool useC110TunedDefaults)
-        => useC110TunedDefaults ? C110LargePrime2ThresholdBound
-            : digits >= 105 ? Math.Min(50_000_000L, largePrime2Bound)
-            : digits >= 100 ? Math.Min(275_000_000L, largePrime2Bound)
-            : digits is >= 91 and <= 99 ? Math.Min(62_500L, largePrime2Bound)
-            : digits >= 86 ? Math.Min(31_250L, largePrime2Bound)
-            : digits is 84 or 85 ? Math.Min(15_625L, largePrime2Bound)
-            : digits == 83 ? Math.Min(31_250L, largePrime2Bound)
-            : digits is >= 80 and <= 82 ? Math.Min(62_500L, largePrime2Bound)
-            : largePrime2Bound;
+    /// <summary>
+    /// Bound used to grant scan log credit in 2LP mode. This does not independently limit accepted
+    /// relation cofactors; the actual per-prime relation bound is <c>LargePrime2Bound</c>.
+    /// </summary>
+    internal static long SelectLargePrime2ThresholdBound(long largePrime2Bound) => largePrime2Bound;
 
     internal static int SelectAPrimeWindowSize(
         int aPrimeCount,

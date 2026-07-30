@@ -22,6 +22,8 @@ internal readonly record struct PolynomialSieveContext(
 // Thread-local worker: owns the sieve buffer and accumulates relations for one thread.
 internal sealed class PolynomialSieveWorker(int sieveBufferLength)
 {
+    private const int RootCrossingScanLength = 32;
+
     public readonly byte[] Sieve = new byte[sieveBufferLength];
     public readonly List<TaggedRelation> Pending = [];
     public readonly Dictionary<int, int> ExponentScratch = [];
@@ -131,6 +133,7 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
             Metrics.Buckets.OverflowHits += largePrimeBuckets.OverflowHitCount;
         }
 
+        Span<(int From, int To)> scanSegments = stackalloc (int, int)[64];
         for (var blockStart = 0; blockStart < fullBlockLength; blockStart += blockSize)
         {
             Metrics.Relations.Blocks++;
@@ -229,20 +232,17 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
             Metrics.Ticks.SieveFill += Stopwatch.GetTimestamp() - tFill;
 
             // Scan: walk this block for relation candidates while it is still hot in cache.
-            // minThreshByte = floor(byteRescale × min threshold across the block).
-            // Most sieve values are small byte totals (3-20); blocks far from polynomial roots
+            // Most sieve values are small byte totals (3-20); ranges far from polynomial roots
             // have minThreshByte ≈ 130-155, so Avx2.SubtractSaturate(chunk, minThreshVec) == 0
             // for ~99% of 32-byte chunks, letting VPTEST skip them without any log() call.
+            // A range that crosses Q(x)=0 needs a zero lower bound. Recursively isolate that
+            // crossing first so the zero gate applies to at most RootCrossingScanLength positions
+            // rather than disabling the fast scan for an entire cache-sized sieve block.
             var tScan = Stopwatch.GetTimestamp();
             var prevTrialDivTicks = Metrics.Ticks.TrialDiv;
             _blockCandidates.Clear();
 
-            // Compute minimum |Q(x)| within this block to derive the minimum threshold.
-            var minThreshByte = MinThresholdByte(
-                ad, bd, cd, m, blockStart, blockEnd, byteRescale, fb.LogScale, largePrimeLogAllowance, parameters.ErrorMargin);
-            var minThreshVec = Vector256.Create(minThreshByte);
-
-            void ScanRange(int from, int to)
+            void ScanRange(int from, int to, byte minThreshByte)
             {
                 for (var k = from; k < to; k++)
                 {
@@ -263,24 +263,53 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
                 }
             }
 
-            var si = blockStart;
-
-            if (Avx2.IsSupported && !parameters.DisableVectorScan)
+            void ScanSegment(int from, int to)
             {
-                // AVX2: process 32 bytes per iteration (Vector256<byte>).
-                for (; si + 32 <= blockEnd; si += 32)
-                {
-                    var chunk = Vector256.LoadUnsafe(ref Unsafe.Add(ref sieve0, si - blockStart));
-                    // VPSUBUSB + VPTEST: all-zero iff every byte < minThreshByte.
-                    var sat = Avx2.SubtractSaturate(chunk, minThreshVec);
-                    if (Avx2.TestZ(sat.AsInt32(), sat.AsInt32())) continue;
+                var minThreshByte = MinThresholdByte(
+                    ad, bd, cd, m, from, to, byteRescale, fb.LogScale,
+                    largePrimeLogAllowance, parameters.ErrorMargin);
+                var si = from;
+                ref var scanSieve0 = ref MemoryMarshal.GetArrayDataReference(Sieve);
 
-                    ScanRange(si, si + 32);
+                if (minThreshByte > 0 && Avx2.IsSupported && !parameters.DisableVectorScan)
+                {
+                    // Subtract one less than the inclusive threshold: SubtractSaturate(value, gate)
+                    // is positive exactly when value >= minThreshByte. At threshold zero every byte
+                    // qualifies, so no vector chunk can be skipped safely.
+                    var minThreshVec = Vector256.Create(InclusiveVectorGate(minThreshByte));
+
+                    // AVX2: process 32 bytes per iteration (Vector256<byte>).
+                    for (; si + 32 <= to; si += 32)
+                    {
+                        var chunk = Vector256.LoadUnsafe(ref Unsafe.Add(ref scanSieve0, si - blockStart));
+                        // VPSUBUSB + VPTEST: all-zero iff every byte is below minThreshByte.
+                        var sat = Avx2.SubtractSaturate(chunk, minThreshVec);
+                        if (Avx2.TestZ(sat.AsInt32(), sat.AsInt32())) continue;
+
+                        ScanRange(si, si + 32, minThreshByte);
+                    }
                 }
+
+                // Scalar tail for the remaining <32 entries, or the whole range when AVX2 is unavailable.
+                ScanRange(si, to, minThreshByte);
             }
 
-            // Scalar tail for the remaining <32 entries, or the whole block when AVX2 is unavailable.
-            ScanRange(si, blockEnd);
+            var segmentCount = 1;
+            scanSegments[0] = (blockStart, blockEnd);
+            while (segmentCount > 0)
+            {
+                var (from, to) = scanSegments[--segmentCount];
+                if (to - from > RootCrossingScanLength &&
+                    CrossesZeroInRange(ad, bd, cd, m, from, to))
+                {
+                    var middle = from + (to - from) / 2;
+                    scanSegments[segmentCount++] = (middle, to);
+                    scanSegments[segmentCount++] = (from, middle);
+                    continue;
+                }
+
+                ScanSegment(from, to);
+            }
 
             var knownPrimeHits = CollectKnownPrimeHits(
                 fb, isAPrime, pos1, pos2, root2Res, largePrimeBuckets, blockStart, blockSize, resieveStart, bucketStart);
@@ -357,26 +386,79 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
     /// <c>[blockStart, blockEnd)</c> could need to survive, derived from the smallest |Q(x)| the
     /// block can produce. Used as a cheap block-wide lower bound before the per-candidate threshold.
     /// </summary>
-    private static byte MinThresholdByte(
+    internal static byte MinThresholdByte(
         double ad, double bd, double cd, long m, int blockStart, int blockEnd,
         double byteRescale, double logScale, double largePrimeLogAllowance, int errorMargin)
     {
         var xBlockStart = (double)(blockStart - m);
         var xBlockEnd = (double)(blockEnd - 1 - m);
-        double EvalAbs(double xd) => Math.Abs(ad * xd * xd + 2.0 * bd * xd + cd);
-        var estLeft = Math.Max(1.0, EvalAbs(xBlockStart));
-        var estRight = Math.Max(1.0, EvalAbs(xBlockEnd));
-        var minEst = Math.Min(estLeft, estRight);
+        var qLeft = ad * xBlockStart * xBlockStart + 2.0 * bd * xBlockStart + cd;
+        var qRight = ad * xBlockEnd * xBlockEnd + 2.0 * bd * xBlockEnd + cd;
+        var estLeft = Math.Max(1.0, Math.Abs(qLeft));
+        var estRight = Math.Max(1.0, Math.Abs(qRight));
+        var minEst = CrossesZero(qLeft, qRight) ? 1.0 : Math.Min(estLeft, estRight);
+
         if (ad != 0.0)
         {
             var xVertex = -bd / ad;
             if (xVertex >= xBlockStart && xVertex <= xBlockEnd)
-                minEst = Math.Min(minEst, Math.Max(1.0, EvalAbs(xVertex)));
+            {
+                var qVertex = ad * xVertex * xVertex + 2.0 * bd * xVertex + cd;
+                if (CrossesZero(qLeft, qVertex) || CrossesZero(qVertex, qRight))
+                {
+                    minEst = 1.0;
+                }
+                else
+                {
+                    minEst = Math.Min(minEst, Math.Max(1.0, Math.Abs(qVertex)));
+                }
+            }
         }
-
         // Scale the minimum threshold to byte units; floor for a conservative lower bound.
         return (byte)Math.Max(0.0, Math.Floor(byteRescale *
             SievingEngine.CandidateThreshold(logScale, minEst, largePrimeLogAllowance, errorMargin)));
+    }
+
+    private static bool CrossesZero(double left, double right)
+        => left == 0.0 || right == 0.0 || (left < 0.0) != (right < 0.0);
+
+    internal static byte InclusiveVectorGate(byte minThreshold)
+    {
+        if (minThreshold == 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(minThreshold),
+                "A zero threshold requires an unconditional scan.");
+        }
+
+        return (byte)(minThreshold - 1);
+    }
+
+    internal static bool CrossesZeroInRange(
+        double ad, double bd, double cd, long m, int rangeStart, int rangeEnd)
+    {
+        var xStart = (double)(rangeStart - m);
+        var xEnd = (double)(rangeEnd - 1 - m);
+        var qLeft = ad * xStart * xStart + 2.0 * bd * xStart + cd;
+        var qRight = ad * xEnd * xEnd + 2.0 * bd * xEnd + cd;
+        if (CrossesZero(qLeft, qRight))
+        {
+            return true;
+        }
+
+        if (ad == 0.0)
+        {
+            return false;
+        }
+
+        var xVertex = -bd / ad;
+        if (xVertex < xStart || xVertex > xEnd)
+        {
+            return false;
+        }
+
+        var qVertex = ad * xVertex * xVertex + 2.0 * bd * xVertex + cd;
+        return CrossesZero(qLeft, qVertex) || CrossesZero(qVertex, qRight);
     }
 
     /// <summary>

@@ -113,7 +113,7 @@ public sealed class FactorizationJobService
 
         try
         {
-            var result = await _pipeline.RunAsync(request, progress, token);
+            var result = await _pipeline.RunAsync(request, progress, token, view.JobId);
             Current = JobProgressReducer.ApplyResult(view, result);
         }
         catch (Exception ex)

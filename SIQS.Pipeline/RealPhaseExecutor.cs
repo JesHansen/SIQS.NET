@@ -89,10 +89,22 @@ internal static class PhaseArtifactStore
     internal static bool IsNumberedBatch(string name, string prefix)
     {
         var expectedLength = prefix.Length + 1 + 4 + ".txt".Length;
-        return name.Length == expectedLength &&
-               name.StartsWith(prefix + "_", StringComparison.Ordinal) &&
-               name.EndsWith(".txt", StringComparison.Ordinal) &&
-               name.AsSpan(prefix.Length + 1, 4).ToArray().All(char.IsDigit);
+        if (name.Length != expectedLength ||
+            !name.StartsWith(prefix + "_", StringComparison.Ordinal) ||
+            !name.EndsWith(".txt", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        foreach (var c in name.AsSpan(prefix.Length + 1, 4))
+        {
+            if (!char.IsDigit(c))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     internal static void QuarantineCorruptTailBatch(

@@ -92,8 +92,29 @@ public sealed class SparseExponentVector : IEquatable<SparseExponentVector>, IEn
         return result;
     }
 
-    public ParityColumnSet DeriveParity() => ParityColumnSet.FromOwned(
-        _columns.Where((_, index) => (_values[index] & 1) != 0).ToArray());
+    public ParityColumnSet DeriveParity()
+    {
+        var count = 0;
+        for (var i = 0; i < _values.Length; i++)
+        {
+            if ((_values[i] & 1) != 0)
+            {
+                count++;
+            }
+        }
+
+        var odd = count == 0 ? Array.Empty<int>() : new int[count];
+        var index = 0;
+        for (var i = 0; i < _values.Length; i++)
+        {
+            if ((_values[i] & 1) != 0)
+            {
+                odd[index++] = _columns[i];
+            }
+        }
+
+        return ParityColumnSet.FromOwned(odd);
+    }
 
     public Enumerator GetEnumerator() => new(_columns, _values);
 

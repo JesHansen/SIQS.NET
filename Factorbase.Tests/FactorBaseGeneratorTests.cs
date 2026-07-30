@@ -88,19 +88,36 @@ public class DefaultBoundTests
     }
 
     [Fact]
-    public void C105_defaults_use_tuned_bound()
+    public void C102_to_c104_defaults_use_tuned_bound()
     {
         Assert.Equal(
-            FactorBaseDefaults.C105TunedBound,
-            FactorBaseDefaults.DefaultBound(BigInteger.Pow(10, 104)));
+            FactorBaseDefaults.C102TunedBound,
+            FactorBaseDefaults.DefaultBound(BigInteger.Pow(10, 101)));
+        Assert.Equal(
+            FactorBaseDefaults.C102TunedBound,
+            FactorBaseDefaults.DefaultBound(BigInteger.Pow(10, 103)));
+    }
+
+    [Theory]
+    [InlineData(105, 30_000_000)]
+    [InlineData(107, 30_000_000)]
+    [InlineData(108, 40_000_000)]
+    [InlineData(109, 40_000_000)]
+    [InlineData(110, 60_000_000)]
+    [InlineData(115, 60_000_000)]
+    public void C105_to_c115_defaults_use_tuned_bounds(int digits, long expected)
+    {
+        Assert.Equal(expected, FactorBaseDefaults.DefaultBound(BigInteger.Pow(10, digits - 1)));
     }
 
     [Fact]
-    public void C110_defaults_use_tuned_bound()
+    public void Defaults_are_non_decreasing_per_digit_through_c115()
     {
-        Assert.Equal(
-            FactorBaseDefaults.C110TunedBound,
-            FactorBaseDefaults.DefaultBound(BigInteger.Pow(10, 109)));
+        var bounds = Enumerable.Range(13, 103)
+            .Select(digits => FactorBaseDefaults.DefaultBound(BigInteger.Pow(10, digits - 1)))
+            .ToArray();
+
+        Assert.All(bounds.Zip(bounds.Skip(1)), pair => Assert.True(pair.First <= pair.Second));
     }
 }
 
@@ -268,30 +285,84 @@ public class FactorBaseGeneratorTests
     public void Even_input_yields_factor_two()
     {
         var result = Generate("100");
-        Assert.True(result.FoundEarlyFactor);
-        var row = Assert.Single(result.EarlyFactors!.Results);
+        Assert.True(result.HasEarlyOutcome);
+        var row = Assert.Single(result.EarlyOutcome!.Results);
         Assert.Equal("even_target", row.Reason);
         Assert.Equal(new BigInteger(2), row.Factor1);
         Assert.Equal(new BigInteger(50), row.Factor2);
+    }
+
+    [Theory]
+    [InlineData("2")]
+    [InlineData("97")]
+    [InlineData("10000000019")]
+    public void Prime_input_is_reported_without_a_trivial_factor_pair(string input)
+    {
+        var result = Generate(input);
+
+        var row = Assert.Single(result.EarlyOutcome!.Results);
+        Assert.Equal(FactorizationStatus.InputPrime, row.Status);
+        Assert.Equal("input_is_prime", row.Reason);
+        Assert.Null(row.Factor1);
+        Assert.Null(row.Factor2);
+    }
+
+    [Fact]
+    public void Fixed_witness_survivor_above_the_deterministic_bound_does_not_short_circuit()
+    {
+        var input = BigInteger.Parse("3317044064679887385961981");
+        Assert.Equal(
+            input,
+            BigInteger.Parse("1287836182261") * BigInteger.Parse("2575672364521"));
+        Assert.True(Primality.IsProbablePrime(input));
+
+        var result = Generate(input.ToString());
+
+        Assert.False(result.HasEarlyOutcome);
+        Assert.NotNull(result.FactorBase);
     }
 
     [Fact]
     public void Perfect_square_yields_root()
     {
         var result = Generate("1190281"); // 1091^2
-        Assert.True(result.FoundEarlyFactor);
-        var row = Assert.Single(result.EarlyFactors!.Results);
+        Assert.True(result.HasEarlyOutcome);
+        var row = Assert.Single(result.EarlyOutcome!.Results);
         Assert.Equal("perfect_square", row.Reason);
         Assert.Equal(new BigInteger(1091), row.Factor1);
         Assert.Equal(new BigInteger(1091), row.Factor2);
     }
 
     [Fact]
+    public void Odd_prime_power_yields_an_exact_root_factor()
+    {
+        var result = Generate(
+            "673567582867833621877398681261506467469364817364484181307694303405612734078761");
+
+        var row = Assert.Single(result.EarlyOutcome!.Results);
+        Assert.Equal(FactorizationStatus.FactorFound, row.Status);
+        Assert.Equal("perfect_power", row.Reason);
+        Assert.Equal(BigInteger.Parse("87658437637587659584646521"), row.Factor1);
+        Assert.Equal(row.Factor1 * row.Factor1, row.Factor2);
+    }
+
+    [Fact]
+    public void Cheap_small_factor_check_precedes_perfect_power_detection()
+    {
+        var result = Generate("27");
+
+        var row = Assert.Single(result.EarlyOutcome!.Results);
+        Assert.Equal("small_prime_factor", row.Reason);
+        Assert.Equal(new BigInteger(3), row.Factor1);
+        Assert.Equal(new BigInteger(9), row.Factor2);
+    }
+
+    [Fact]
     public void Small_prime_factor_is_detected()
     {
         var result = Generate("1022217"); // 3 * 340739, odd and not a perfect square
-        Assert.True(result.FoundEarlyFactor);
-        var row = Assert.Single(result.EarlyFactors!.Results);
+        Assert.True(result.HasEarlyOutcome);
+        var row = Assert.Single(result.EarlyOutcome!.Results);
         Assert.Equal("small_prime_factor", row.Reason);
         Assert.Equal(new BigInteger(3), row.Factor1);
     }
@@ -300,8 +371,8 @@ public class FactorBaseGeneratorTests
     public void Tiny_semiprime_is_detected_by_trial_division_to_square_root()
     {
         var result = Generate("3141407"); // 1663 * 1889
-        Assert.True(result.FoundEarlyFactor);
-        var row = Assert.Single(result.EarlyFactors!.Results);
+        Assert.True(result.HasEarlyOutcome);
+        var row = Assert.Single(result.EarlyOutcome!.Results);
         Assert.Equal("tiny_input_trial_division", row.Reason);
         Assert.Equal(new BigInteger(1663), row.Factor1);
         Assert.Equal(new BigInteger(1889), row.Factor2);
@@ -311,7 +382,7 @@ public class FactorBaseGeneratorTests
     public void Builds_factor_base_for_composite_without_small_factors()
     {
         var result = Generate("1000036000099"); // 1000003 * 1000033, both above tiny precheck bound
-        Assert.False(result.FoundEarlyFactor);
+        Assert.False(result.HasEarlyOutcome);
         var doc = result.FactorBase!;
 
         // scaled_n = multiplier * target_n

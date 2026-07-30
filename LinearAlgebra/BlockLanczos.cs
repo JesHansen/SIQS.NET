@@ -31,9 +31,8 @@ public static class BlockLanczos
             return new SolveResult(Array.Empty<Dependency>(), 0, Solver: "block-lanczos");
         }
 
-        // Already-zero rows are true dependencies, but in mixed matrices they usually produce
-        // trivial square-root attempts and noisy dependency telemetry. Suppress them when there is
-        // a non-empty matrix to solve; keep them only for the all-zero matrix case.
+        // Already-zero rows are true dependencies. Emit them first because they require no matrix
+        // solve, then spend any remaining dependency budget on the non-zero submatrix.
         var nonZeroRows = new List<RelationRow>(rows.Count);
         var originalRowIds = new List<int>(rows.Count);
         var zeroRowIds = new List<int>();
@@ -59,20 +58,30 @@ public static class BlockLanczos
             return new SolveResult(zeroRowsOnly, 0, Solver: "block-lanczos");
         }
 
+        var dependencies = zeroRowIds
+            .Take(maxDependencies)
+            .Select(id => new Dependency(ImmutableArray.Create(id)))
+            .ToList();
+        var remainingDependencyBudget = maxDependencies - dependencies.Count;
+        if (remainingDependencyBudget == 0)
+        {
+            return new SolveResult(dependencies, 0, Solver: "block-lanczos");
+        }
+
         options ??= new BlockLanczosOptions();
         var matrix = BlockLanczosSparseMatrix.FromRelationRows(nonZeroRows, columnCount, options);
         if (matrix.RelationCount == 0)
         {
-            return new SolveResult(Array.Empty<Dependency>(), 0, Solver: "block-lanczos");
+            return new SolveResult(dependencies, 0, Solver: "block-lanczos");
         }
 
-        var dependencies = new List<Dependency>();
-        var seen = new HashSet<Dependency>();
+        var seen = new HashSet<Dependency>(dependencies);
+        var lanczosDependencyCount = 0;
         var runs = 0;
         var lastDimensionsSolved = 0;
         var runMilliseconds = new List<long>(4);
         var runDimensions = new List<int>(4);
-        for (var retry = 0; retry < 4 && dependencies.Count < maxDependencies; retry++)
+        for (var retry = 0; retry < 4 && lanczosDependencyCount < remainingDependencyBudget; retry++)
         {
             runs++;
             var runWatch = System.Diagnostics.Stopwatch.StartNew();
@@ -97,7 +106,7 @@ public static class BlockLanczos
                     matrix.SparseParityColumnCount,
                     runWatch.Elapsed));
                 var extracted = BlockLanczosDependencyExtractor.ExtractVerified(
-                    nonZeroRows, columnCount, candidateBlock, maxDependencies - dependencies.Count);
+                    nonZeroRows, columnCount, candidateBlock, remainingDependencyBudget - lanczosDependencyCount);
                 var acceptedBeforeExtraction = dependencies.Count;
                 foreach (var dependency in extracted)
                 {
@@ -110,7 +119,8 @@ public static class BlockLanczos
                     if (seen.Add(mapped))
                     {
                         dependencies.Add(mapped);
-                        if (dependencies.Count >= maxDependencies)
+                        lanczosDependencyCount++;
+                        if (lanczosDependencyCount >= remainingDependencyBudget)
                         {
                             break;
                         }
@@ -125,7 +135,7 @@ public static class BlockLanczos
                     matrix.SparseParityColumnCount,
                     runWatch.Elapsed));
 
-                if (dependencies.Count > 0)
+                if (dependencies.Count > acceptedBeforeExtraction)
                 {
                     progress?.Report(new BlockLanczosProgress(
                         "run-complete",
@@ -139,7 +149,7 @@ public static class BlockLanczos
                         dimensionsSolved,
                         Solver: "block-lanczos",
                         LanczosRuns: runs,
-                        LanczosDependencies: dependencies.Count,
+                        LanczosDependencies: lanczosDependencyCount,
                         LanczosRunMilliseconds: runMilliseconds.ToArray(),
                         LanczosRunDimensions: runDimensions.ToArray());
                 }
@@ -164,7 +174,7 @@ public static class BlockLanczos
             lastDimensionsSolved,
             Solver: "block-lanczos",
             LanczosRuns: runs,
-            LanczosDependencies: dependencies.Count,
+            LanczosDependencies: lanczosDependencyCount,
             LanczosRunMilliseconds: runMilliseconds.ToArray(),
             LanczosRunDimensions: runDimensions.ToArray());
     }
@@ -375,16 +385,11 @@ public static class BlockLanczos
             var partial = workspace.Partials[partitionIndex];
             Array.Clear(partial);
             var range = workspace.Partitions[partitionIndex];
-            for (var i = range.Start; i < range.End; i++)
-            {
-                var word = left[i];
-                while (word != 0)
-                {
-                    var bit = System.Numerics.BitOperations.TrailingZeroCount(word);
-                    partial[bit] ^= right[i];
-                    word &= word - 1;
-                }
-            }
+            var length = range.End - range.Start;
+            Gf2Matrix64.TransposeMultiplyAccumulate(
+                left.AsSpan(range.Start, length),
+                right.AsSpan(range.Start, length),
+                partial);
         });
 
         var result = new ulong[64];

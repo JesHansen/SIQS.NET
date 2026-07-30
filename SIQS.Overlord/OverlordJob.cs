@@ -234,6 +234,7 @@ public sealed class OverlordJob
     {
         await Task.Delay(gracePeriod).ConfigureAwait(false);
 
+        TaskCompletionSource<SieveOutcome> completion;
         lock (_gate)
         {
             if (generation != _sieveGeneration || Phase != OverlordPhase.Draining)
@@ -243,9 +244,10 @@ public sealed class OverlordJob
 
             // Any later Ingest call observes Finishing under this same gate and discards its batch.
             Phase = OverlordPhase.Finishing;
+            completion = _sieveCompletion;
         }
 
-        _sieveCompletion.TrySetResult(SieveOutcome.Converged);
+        completion.TrySetResult(SieveOutcome.Converged);
         RaiseChanged();
     }
 
@@ -336,13 +338,15 @@ public sealed class OverlordJob
 
     public void Fault(string error)
     {
+        TaskCompletionSource<SieveOutcome> completion;
         lock (_gate)
         {
             Phase = OverlordPhase.Faulted;
             Error = error;
+            completion = _sieveCompletion;
         }
 
-        _sieveCompletion.TrySetException(new InvalidOperationException(error));
+        completion.TrySetException(new InvalidOperationException(error));
         RaiseChanged();
     }
 
@@ -373,6 +377,7 @@ public sealed class OverlordJob
             return;
         }
 
+        TaskCompletionSource<SieveOutcome> completion;
         lock (_gate)
         {
             if (Phase != OverlordPhase.Sieving)
@@ -383,9 +388,10 @@ public sealed class OverlordJob
             // Taking the gate closes ingestion atomically. Existing request bodies can continue to
             // arrive, but their sessions will discard rather than mutate the completed sieve output.
             Phase = OverlordPhase.Finishing;
+            completion = _sieveCompletion;
         }
 
-        _sieveCompletion.TrySetResult(SieveOutcome.Exhausted);
+        completion.TrySetResult(SieveOutcome.Exhausted);
         RaiseChanged();
     }
 

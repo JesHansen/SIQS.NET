@@ -126,14 +126,13 @@ public static class RawRelationsFile
                 continue;
             }
 
-            var f = Csv.ParseLine(line);
-            if (f.Count == 0 || f[0] == "relation_id")
+            if (IsHeaderRow(line))
             {
-                continue; // header row
+                continue;
             }
 
             EnsureHeader(meta, ref format, ref isV2, ref metadata);
-            relations.Add(ParseRecord(f, isV2!.Value));
+            relations.Add(ParseRecord(line, isV2!.Value));
         }
 
         EnsureHeader(meta, ref format, ref isV2, ref metadata);
@@ -219,7 +218,7 @@ public static class RawRelationsFile
             EnsureHeader(meta, ref format, ref isV2, ref metadata);
             if (shouldParse is null || shouldParse(ordinal))
             {
-                yield return (ordinal, ParseRecord(Csv.ParseLine(line), isV2!.Value));
+                yield return (ordinal, ParseRecord(line, isV2!.Value));
             }
 
             ordinal++;
@@ -230,7 +229,46 @@ public static class RawRelationsFile
         => line.StartsWith("relation_id", StringComparison.Ordinal)
             && (line.Length == "relation_id".Length || line["relation_id".Length] == ',');
 
-    private static RawRelationRecord ParseRecord(IReadOnlyList<string> f, bool isV2)
+    private static RawRelationRecord ParseRecord(string line, bool isV2)
+    {
+        if (line.Contains('"'))
+        {
+            return ParseQuotedRecord(Csv.ParseLine(line), isV2);
+        }
+
+        var span = line.AsSpan();
+        Span<Range> f = stackalloc Range[13];
+        var fieldCount = span.Split(f, ',');
+        if (fieldCount < 11)
+        {
+            throw new FormatException($"Raw relation row has {fieldCount} fields; at least 11 are required.");
+        }
+
+        var largePrimes = isV2
+            ? ParseBigIntegers(fieldCount > 11 ? span[f[11]] : default)
+            : fieldCount > 11 && !span[f[11]].IsEmpty
+                ? new[] { BigInteger.Parse(span[f[11]], CultureInfo.InvariantCulture) }
+                : Array.Empty<BigInteger>();
+
+        return new RawRelationRecord(
+            RelationId: line[f[0]],
+            Kind: SiqsTokens.Parse<RelationKind>(span[f[1]]),
+            PolyId: line[f[2]],
+            A: BigInteger.Parse(span[f[3]], CultureInfo.InvariantCulture),
+            B: BigInteger.Parse(span[f[4]], CultureInfo.InvariantCulture),
+            C: BigInteger.Parse(span[f[5]], CultureInfo.InvariantCulture),
+            X: long.Parse(span[f[6]], CultureInfo.InvariantCulture),
+            T: BigInteger.Parse(span[f[7]], CultureInfo.InvariantCulture),
+            Sign: int.Parse(span[f[8]], CultureInfo.InvariantCulture),
+            FactorExponents: ExponentMapFormat.ParseVector(span[f[9]]),
+            ParityColumns: IntegerListFormat.ParseParityColumns(span[f[10]]),
+            LargePrime: !isV2 && largePrimes.Length == 1 ? largePrimes[0] : null)
+        {
+            LargePrimes = largePrimes,
+        };
+    }
+
+    private static RawRelationRecord ParseQuotedRecord(IReadOnlyList<string> f, bool isV2)
     {
         var largePrimes = isV2
             ? ParseBigIntegers(f.Count > 11 ? f[11] : string.Empty)
@@ -322,11 +360,36 @@ public static class RawRelationsFile
         => string.Join(' ', values.Select(Dec));
 
     private static BigInteger[] ParseBigIntegers(string text)
-        => text.Length == 0
-            ? Array.Empty<BigInteger>()
-            : text.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .Select(v => BigInteger.Parse(v, CultureInfo.InvariantCulture))
-                .ToArray();
+        => ParseBigIntegers(text.AsSpan());
+
+    private static BigInteger[] ParseBigIntegers(ReadOnlySpan<char> text)
+    {
+        var count = 0;
+        foreach (var range in text.Split(' '))
+        {
+            if (!text[range].IsEmpty)
+            {
+                count++;
+            }
+        }
+
+        if (count == 0)
+        {
+            return Array.Empty<BigInteger>();
+        }
+
+        var values = new BigInteger[count];
+        var index = 0;
+        foreach (var range in text.Split(' '))
+        {
+            if (!text[range].IsEmpty)
+            {
+                values[index++] = BigInteger.Parse(text[range], CultureInfo.InvariantCulture);
+            }
+        }
+
+        return values;
+    }
 
     private static void WriteLine(TextWriter writer, string line)
     {

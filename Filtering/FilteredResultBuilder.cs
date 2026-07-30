@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 using SIQS.Contracts;
 using SIQS.Contracts.Files;
 
@@ -68,10 +69,15 @@ internal static class FilteredResultBuilder
         {
             foreach (var column in survivors[row].Parity)
             {
-                var (h1, h2, weight) = signatures.GetValueOrDefault(column, (0xcbf29ce484222325UL, 0x9E3779B97F4A7C15UL, 0));
-                h1 = (h1 ^ (uint)row) * 0x100000001B3UL;
-                h2 = (h2 ^ (uint)row) * 0xD1B54A32D192ED03UL;
-                signatures[column] = (h1, h2, weight + 1);
+                ref var signature = ref CollectionsMarshal.GetValueRefOrAddDefault(signatures, column, out var exists);
+                if (!exists)
+                {
+                    signature = (0xcbf29ce484222325UL, 0x9E3779B97F4A7C15UL, 0);
+                }
+
+                signature.H1 = (signature.H1 ^ (uint)row) * 0x100000001B3UL;
+                signature.H2 = (signature.H2 ^ (uint)row) * 0xD1B54A32D192ED03UL;
+                signature.Weight++;
             }
         }
 
@@ -103,15 +109,16 @@ internal static class FilteredResultBuilder
 
     private static int[] RemapColumns(IReadOnlyList<int> columns, IReadOnlyDictionary<int, int> columnMap)
     {
-        var remapped = new List<int>(columns.Count);
+        var remapped = new int[columns.Count];
+        var count = 0;
         foreach (var column in columns)
         {
             if (columnMap.TryGetValue(column, out var mapped))
             {
-                remapped.Add(mapped);
+                remapped[count++] = mapped;
             }
         }
 
-        return remapped.ToArray();
+        return count == remapped.Length ? remapped : remapped[..count];
     }
 }

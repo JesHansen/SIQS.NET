@@ -34,7 +34,7 @@ internal static class PartialCycleCombiner
 
             // Drop mirrored re-finds of the same partial before cycle building: pairing a partial
             // with its own mirror forms a zero-parity cycle that can only produce a trivial dependency.
-            if (!seenPartials.Add(Fingerprint.Of(RelationCongruence.CanonicalKey(partial.T, partial.FactorExponents, largePrimes, scaledN))))
+            if (!seenPartials.Add(RelationCongruence.FingerprintOf(partial.T, partial.FactorExponents, largePrimes, scaledN)))
             {
                 counters.DuplicatesRemoved++;
                 continue;
@@ -217,21 +217,23 @@ internal static class PartialCycleCombiner
         ulong start,
         ulong end)
     {
-        var startAncestors = new Dictionary<ulong, List<RawRelationLocator>>();
+        // One shared edge list for the start→root walk; each ancestor records only its depth into
+        // that list, so the start-side path to the meeting vertex is a slice rather than a snapshot.
+        var startDepths = new Dictionary<ulong, int>();
+        var startEdges = new List<RawRelationLocator>();
         var current = start;
-        var path = new List<RawRelationLocator>();
-        startAncestors[current] = [];
+        startDepths[current] = 0;
         while (forestParent.TryGetValue(current, out var next))
         {
-            path = new List<RawRelationLocator>(path) { next.Edge };
+            startEdges.Add(next.Edge);
             current = next.Parent;
-            startAncestors[current] = path;
+            startDepths[current] = startEdges.Count;
         }
 
         current = end;
         var endPath = new List<RawRelationLocator>();
-        List<RawRelationLocator>? startPath = null;
-        while (!startAncestors.TryGetValue(current, out startPath))
+        int startDepth;
+        while (!startDepths.TryGetValue(current, out startDepth))
         {
             if (!forestParent.TryGetValue(current, out var next))
             {
@@ -242,8 +244,8 @@ internal static class PartialCycleCombiner
             current = next.Parent;
         }
 
-        var result = new List<RawRelationLocator>(startPath.Count + endPath.Count);
-        result.AddRange(startPath);
+        var result = new List<RawRelationLocator>(startDepth + endPath.Count);
+        result.AddRange(startEdges.Take(startDepth));
         result.AddRange(endPath);
         return result;
     }

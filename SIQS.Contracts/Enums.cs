@@ -21,6 +21,7 @@ public enum JobStatus
     Canceled,
     Failed,
     CompletedNoFactor,
+    CompletedPrime,
     CompletedFactorFound,
     CompletedTrivialFactor,
 }
@@ -76,4 +77,5 @@ public enum FactorizationStatus
     Trivial,
     Invalid,
     NoFactor,
+    InputPrime,
 }

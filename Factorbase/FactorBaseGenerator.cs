@@ -12,15 +12,14 @@ public sealed record FactorBaseOptions(
     bool? AllowTinyInputTrialDivision = null);
 
 /// <summary>
-/// Result of factor base generation: either a built factor base, or an early factor discovered by
-/// a precheck (in which case <see cref="FactorBase"/> is null and <see cref="EarlyFactors"/> holds
-/// the trivial-factor result).
+/// Result of factor base generation: either a built factor base, or an early precheck outcome
+/// (in which case <see cref="FactorBase"/> is null and <see cref="EarlyOutcome"/> holds the result).
 /// </summary>
 public sealed record FactorBaseGenerationResult(
     FactorBaseDocument? FactorBase,
-    FactorsDocument? EarlyFactors)
+    FactorsDocument? EarlyOutcome)
 {
-    public bool FoundEarlyFactor => EarlyFactors is not null;
+    public bool HasEarlyOutcome => EarlyOutcome is not null;
 }
 
 /// <summary>
@@ -43,7 +42,7 @@ public static class FactorBaseGenerator
             ?? (options.Bound is null && options.Multiplier is null);
         if (FactorBasePrecheck.TryFind(n, allowTinyTrialDivision) is { } early)
         {
-            Report(progress, ProgressLevel.Info, "precheck found trivial factor", artifact: "factors.txt");
+            Report(progress, ProgressLevel.Info, "precheck completed", artifact: "factors.txt");
             return new FactorBaseGenerationResult(null, early);
         }
 
@@ -64,7 +63,7 @@ public static class FactorBaseGenerator
             counters: new() { ["bound"] = bound.ToString(), ["multiplier"] = multiplier.ToString() });
 
         var build = FactorBaseDocumentBuilder.Build(n, multiplier, scaledN, bound);
-        if (build.EarlyFactors is { } factorFoundDuringBuild)
+        if (build.EarlyOutcome is { } factorFoundDuringBuild)
         {
             return new FactorBaseGenerationResult(null, factorFoundDuringBuild);
         }

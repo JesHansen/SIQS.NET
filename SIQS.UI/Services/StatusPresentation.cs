@@ -7,7 +7,7 @@ internal static class StatusPresentation
 {
     public static string CssClass(JobStatus status) => status switch
     {
-        JobStatus.CompletedFactorFound or JobStatus.CompletedTrivialFactor => "ok",
+        JobStatus.CompletedFactorFound or JobStatus.CompletedTrivialFactor or JobStatus.CompletedPrime => "ok",
         JobStatus.Failed => "fail",
         JobStatus.Canceled or JobStatus.Canceling => "warn",
         JobStatus.Running => "run",

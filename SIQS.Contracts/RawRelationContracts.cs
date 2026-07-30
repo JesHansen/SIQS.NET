@@ -34,6 +34,36 @@ public sealed record RawRelationRecord : IEquatable<RawRelationRecord>
         _largePrimes = LargePrime is { } q ? new[] { q } : Array.Empty<BigInteger>();
     }
 
+    /// <summary>Adopts already validated vectors directly, avoiding the defensive re-copy above.</summary>
+    public RawRelationRecord(
+        string RelationId,
+        RelationKind Kind,
+        string PolyId,
+        BigInteger A,
+        BigInteger B,
+        BigInteger C,
+        long X,
+        BigInteger T,
+        int Sign,
+        SparseExponentVector FactorExponents,
+        ParityColumnSet ParityColumns,
+        BigInteger? LargePrime)
+    {
+        this.RelationId = RelationId;
+        this.Kind = Kind;
+        this.PolyId = PolyId;
+        this.A = A;
+        this.B = B;
+        this.C = C;
+        this.X = X;
+        this.T = T;
+        this.Sign = Sign;
+        this.FactorExponents = FactorExponents;
+        this.ParityColumns = ParityColumns;
+        this.LargePrime = LargePrime;
+        _largePrimes = LargePrime is { } q ? new[] { q } : Array.Empty<BigInteger>();
+    }
+
     public string RelationId { get; init; }
     public RelationKind Kind { get; init; }
     public string PolyId { get; init; }

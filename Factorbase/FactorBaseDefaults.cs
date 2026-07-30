@@ -11,10 +11,13 @@ public static class FactorBaseDefaults
 {
     public const long MinBound = 1_000;
     public const long SmoothTargetBound = 2_000_000;
-    public const long MaxBound = 40_000_000;
+    public const long MaxBound = 60_000_000;
     public const long LegacyLargeCompositeMaxBound = 5_000_000;
-    public const long C105TunedBound = 14_000_000;
-    public const long C110TunedBound = 40_000_000;
+    public const long C102TunedBound = 15_000_000;
+    public const long C105TunedBound = 30_000_000;
+    public const long C108TunedBound = 40_000_000;
+    public const long C110TunedBound = 60_000_000;
+    private const long C88MonotonicFloor = 2_538_756;
     private const int SmoothAnchorDigits = 20;
     private const int SmoothTargetDigits = 90;
 
@@ -41,17 +44,19 @@ public static class FactorBaseDefaults
         };
 
         var rawBound = (long)Math.Ceiling(bound * largeCompositeMultiplier);
-        if (digits >= 110)
+        if (digits >= 89)
         {
-            return C110TunedBound;
+            rawBound = Math.Max(rawBound, C88MonotonicFloor);
         }
 
-        if (digits >= 105)
+        return digits switch
         {
-            return C105TunedBound;
-        }
-
-        return Math.Clamp(rawBound, MinBound, LegacyLargeCompositeMaxBound);
+            >= 110 => C110TunedBound,
+            >= 108 => C108TunedBound,
+            >= 105 => C105TunedBound,
+            >= 102 => C102TunedBound,
+            _ => Math.Clamp(rawBound, MinBound, LegacyLargeCompositeMaxBound),
+        };
     }
 
     private static double LForDecimalDigits(int digits)

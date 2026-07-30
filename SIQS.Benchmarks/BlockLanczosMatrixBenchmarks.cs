@@ -10,7 +10,8 @@ namespace SIQS.Benchmarks;
 ///
 /// Fixture: <see cref="RowCount"/> relation rows over <see cref="ColumnCount"/> parity columns,
 /// <see cref="RowWeight"/> set bits per row (typical filtered-matrix density). Parallelism is forced
-/// to 1 for the sequential matrix and left at the default (processor count) for the parallel matrix.
+/// to 1 for the sequential matrix and swept over <see cref="Parallelism"/> for the parallel matrix
+/// (0 = processor count) so thread-scaling regressions in the parallel kernels show up.
 /// </summary>
 [MemoryDiagnoser]
 public class BlockLanczosMatrixBenchmarks
@@ -23,6 +24,9 @@ public class BlockLanczosMatrixBenchmarks
 
     [Params(16)]
     public int RowWeight;
+
+    [Params(4, 0)]
+    public int Parallelism;
 
     private BlockLanczosSparseMatrix _sequential = null!;
     private BlockLanczosSparseMatrix _parallel = null!;
@@ -41,7 +45,11 @@ public class BlockLanczosMatrixBenchmarks
             BlockLanczosOptions.DefaultMinPostLanczosDimension,
             Parallelism: 1);
         _sequential = BlockLanczosSparseMatrix.FromRelationRows(rows, ColumnCount, sequentialOptions);
-        _parallel = BlockLanczosSparseMatrix.FromRelationRows(rows, ColumnCount, new BlockLanczosOptions());
+        var parallelOptions = new BlockLanczosOptions(
+            BlockLanczosOptions.DefaultPostLanczosRows,
+            BlockLanczosOptions.DefaultMinPostLanczosDimension,
+            Parallelism);
+        _parallel = BlockLanczosSparseMatrix.FromRelationRows(rows, ColumnCount, parallelOptions);
 
         _relationVector = SparseMatrixFixture.BuildBlock(_sequential.RelationCount, seed: 0x1234);
         _sparseVector = SparseMatrixFixture.BuildBlock(_sequential.SparseParityColumnCount, seed: 0x5678);
