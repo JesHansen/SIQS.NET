@@ -29,11 +29,20 @@ public sealed class LeaseLedger
         _chunkSize = chunkSize;
     }
 
-    public sealed record Lease(string LeaseId, int Start, int End, DateTimeOffset ExpiresUtc);
+    public sealed record Lease(
+        string LeaseId,
+        int Start,
+        int End,
+        DateTimeOffset ExpiresUtc,
+        int ActiveUploads = 0,
+        bool PendingIngest = false);
 
     /// <summary>Leases the next available range, or null when no work is currently available.</summary>
-    public Lease? TryLease(TimeSpan ttl, DateTimeOffset now)
+    public Lease? TryLease(TimeSpan ttl, DateTimeOffset now, int? chunkSize = null)
     {
+        var requestedChunkSize = chunkSize ?? _chunkSize;
+        ArgumentOutOfRangeException.ThrowIfLessThan(requestedChunkSize, 1);
+
         lock (_gate)
         {
             SweepExpired(now);
@@ -41,11 +50,16 @@ public sealed class LeaseLedger
             (int Start, int End) range;
             if (_reclaimed.Count > 0)
             {
-                range = _reclaimed.Dequeue();
+                var reclaimed = _reclaimed.Dequeue();
+                range = (reclaimed.Start, (int)Math.Min((long)reclaimed.Start + requestedChunkSize, reclaimed.End));
+                if (range.End < reclaimed.End)
+                {
+                    _reclaimed.Enqueue((range.End, reclaimed.End));
+                }
             }
             else if (_cursor < _aCount)
             {
-                range = (_cursor, Math.Min(_cursor + _chunkSize, _aCount));
+                range = (_cursor, (int)Math.Min((long)_cursor + requestedChunkSize, _aCount));
                 _cursor = range.End;
             }
             else
@@ -71,6 +85,115 @@ public sealed class LeaseLedger
             }
 
             _completed = Math.Min(_aCount, _completed + (lease.End - lease.Start));
+            return true;
+        }
+    }
+
+    /// <summary>Immediately returns a declined client's range to the unassigned queue.</summary>
+    public bool Abandon(string leaseId)
+    {
+        lock (_gate)
+        {
+            if (!_outstanding.Remove(leaseId, out var lease))
+            {
+                return false;
+            }
+
+            _reclaimed.Enqueue((lease.Start, lease.End));
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Protects a lease from expiry while an HTTP request is copying a chunk into the durable inbox.
+    /// Returns false when the lease was already expired, completed, or unknown.
+    /// </summary>
+    public bool BeginUpload(string leaseId, TimeSpan ttl, DateTimeOffset now)
+    {
+        lock (_gate)
+        {
+            SweepExpired(now);
+            if (!_outstanding.TryGetValue(leaseId, out var lease) || lease.PendingIngest)
+            {
+                return false;
+            }
+
+            _outstanding[leaseId] = lease with
+            {
+                ExpiresUtc = now + ttl,
+                ActiveUploads = checked(lease.ActiveUploads + 1),
+            };
+            return true;
+        }
+    }
+
+    /// <summary>Ends an active chunk transfer and gives the client a fresh TTL for its next chunk.</summary>
+    public void EndUpload(string leaseId, TimeSpan ttl, DateTimeOffset now)
+    {
+        lock (_gate)
+        {
+            if (!_outstanding.TryGetValue(leaseId, out var lease))
+            {
+                return;
+            }
+
+            _outstanding[leaseId] = lease with
+            {
+                ExpiresUtc = now + ttl,
+                ActiveUploads = Math.Max(0, lease.ActiveUploads - 1),
+            };
+        }
+    }
+
+    /// <summary>
+    /// Marks the client upload complete. The range remains protected without a TTL until the inbox
+    /// worker has processed all of the lease's durable chunks.
+    /// </summary>
+    public bool ProtectPendingIngest(string leaseId, DateTimeOffset now)
+    {
+        lock (_gate)
+        {
+            SweepExpired(now);
+            if (!_outstanding.TryGetValue(leaseId, out var lease))
+            {
+                return false;
+            }
+
+            _outstanding[leaseId] = lease with { PendingIngest = true };
+            return true;
+        }
+    }
+
+    /// <summary>Restores normal TTL expiry when the durable completion marker could not be written.</summary>
+    public void CancelPendingIngest(string leaseId, TimeSpan ttl, DateTimeOffset now)
+    {
+        lock (_gate)
+        {
+            if (_outstanding.TryGetValue(leaseId, out var lease))
+            {
+                _outstanding[leaseId] = lease with
+                {
+                    PendingIngest = false,
+                    ExpiresUtc = now + ttl,
+                };
+            }
+        }
+    }
+
+    /// <summary>
+    /// Releases a lease whose durable upload could not be parsed. Its A-range becomes available for
+    /// reassignment while valid relations from any successfully processed chunks remain ingested.
+    /// </summary>
+    public bool FailPendingIngest(string leaseId)
+    {
+        lock (_gate)
+        {
+            if (!_outstanding.Remove(leaseId, out var lease))
+            {
+                return false;
+            }
+
+            _reclaimed.Enqueue((lease.Start, lease.End));
             return true;
         }
     }
@@ -127,7 +250,9 @@ public sealed class LeaseLedger
             return;
         }
 
-        foreach (var lease in _outstanding.Values.Where(l => l.ExpiresUtc <= now).ToArray())
+        foreach (var lease in _outstanding.Values
+                     .Where(lease => lease.ActiveUploads == 0 && !lease.PendingIngest && lease.ExpiresUtc <= now)
+                     .ToArray())
         {
             _outstanding.Remove(lease.LeaseId);
             _reclaimed.Enqueue((lease.Start, lease.End));

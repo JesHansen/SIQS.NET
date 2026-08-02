@@ -11,7 +11,10 @@ internal sealed record FilteringCommand(
     IReadOnlyList<string> RelationPaths,
     IReadOnlyList<string> PartialPaths,
     int? MaxPartialsPerPrime,
-    string? SpillDirectory)
+    string? SpillDirectory,
+    int? MaxCycleLength,
+    bool EnableTwoMerge,
+    int? TwoMergeSlack)
 {
     public static FilteringCommand Parse(string[] args)
     {
@@ -46,7 +49,16 @@ internal sealed record FilteringCommand(
             GetOptional(values, "max-partials-per-prime") is { } maxPartials
                 ? int.Parse(maxPartials, CultureInfo.InvariantCulture)
                 : null,
-            GetOptional(values, "filter-spill-dir"));
+            GetOptional(values, "filter-spill-dir"),
+            GetOptional(values, "max-cycle-length") is { } maxCycleLength
+                ? int.Parse(maxCycleLength, CultureInfo.InvariantCulture)
+                : null,
+            GetOptional(values, "enable-two-merge") is { } enableTwoMerge
+                ? bool.Parse(enableTwoMerge)
+                : true,
+            GetOptional(values, "two-merge-slack") is { } twoMergeSlack
+                ? int.Parse(twoMergeSlack, CultureInfo.InvariantCulture)
+                : null);
     }
 
     private static string? GetOptional(IReadOnlyDictionary<string, List<string>> values, string key)

@@ -16,6 +16,7 @@ internal static class FilteringProgressReporter
                 ["raw_partials"] = counters.RawPartials.ToString(),
                 ["combined_partials"] = counters.CombinedPartials.ToString(),
                 ["rejected_cycles"] = counters.RejectedCycles.ToString(),
+                ["two_merges"] = counters.TwoMerges.ToString(),
                 ["surplus_rows_trimmed"] = counters.SurplusRowsTrimmed.ToString(),
                 ["duplicates_removed"] = counters.DuplicatesRemoved.ToString(),
                 ["redundant_columns_merged"] = counters.RedundantColumnsMerged.ToString(),

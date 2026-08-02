@@ -59,6 +59,8 @@ public sealed class RawRelationBatchFileSink : IRawRelationSink
     private readonly List<string> _artifacts = [];
     private int _fullBatch;
     private int _partialBatch;
+    private int _fullBatchCount;
+    private int _partialBatchCount;
 
     public RawRelationBatchFileSink(string outDir, RawRelationsMetadata metadata, int batchSize)
     {
@@ -87,7 +89,7 @@ public sealed class RawRelationBatchFileSink : IRawRelationSink
             if (relation.Kind == RelationKind.Partial)
             {
                 _partialBuffer.Add(relation);
-                if (_partialBuffer.Count >= _batchSize)
+                if (_partialBatchCount + _partialBuffer.Count >= _batchSize)
                 {
                     FlushPartials();
                 }
@@ -95,7 +97,7 @@ public sealed class RawRelationBatchFileSink : IRawRelationSink
             else
             {
                 _fullBuffer.Add(relation);
-                if (_fullBuffer.Count >= _batchSize)
+                if (_fullBatchCount + _fullBuffer.Count >= _batchSize)
                 {
                     FlushFulls();
                 }
@@ -112,47 +114,89 @@ public sealed class RawRelationBatchFileSink : IRawRelationSink
     {
         lock (_gate)
         {
-            FlushFulls();
-            FlushPartials();
+            FlushFulls(durable: false);
+            FlushPartials(durable: false);
         }
     }
 
-    private void FlushFulls()
+    /// <summary>
+    /// Flushes both buffers through the operating-system and device durability boundary. Distributed
+    /// ingestion uses this before discarding its raw write-ahead payload.
+    /// </summary>
+    public void FlushDurable()
     {
-        if (_fullBuffer.Count == 0)
+        lock (_gate)
         {
-            return;
+            FlushFulls(durable: true);
+            FlushPartials(durable: true);
         }
+    }
 
-        WriteBatch("relations",
+    private void FlushFulls(bool durable = false)
+        => FlushBuffer(
+            "relations",
             _metadata.LargePrime2Bound is null ? FileFormats.RawRelationsV1 : FileFormats.RawRelationsV2,
-            _fullBuffer, ref _fullBatch);
-        _fullBuffer.Clear();
-    }
+            _fullBuffer,
+            ref _fullBatch,
+            ref _fullBatchCount,
+            durable);
 
-    private void FlushPartials()
+    private void FlushPartials(bool durable = false)
+        => FlushBuffer(
+            "partials",
+            _metadata.LargePrime2Bound is null ? FileFormats.RawPartialsV1 : FileFormats.RawPartialsV2,
+            _partialBuffer,
+            ref _partialBatch,
+            ref _partialBatchCount,
+            durable);
+
+    private void FlushBuffer(
+        string prefix,
+        string format,
+        List<RawRelationRecord> buffer,
+        ref int batch,
+        ref int batchCount,
+        bool durable)
     {
-        if (_partialBuffer.Count == 0)
+        if (buffer.Count == 0)
         {
             return;
         }
 
-        WriteBatch("partials",
-            _metadata.LargePrime2Bound is null ? FileFormats.RawPartialsV1 : FileFormats.RawPartialsV2,
-            _partialBuffer, ref _partialBatch);
-        _partialBuffer.Clear();
-    }
-
-    private void WriteBatch(string prefix, string format, List<RawRelationRecord> buffer, ref int batch)
-    {
-        var name = $"{prefix}_{batch:D4}.txt";
+        var name = RawBatchFileName.Create(prefix, batch).FileName;
         var path = Path.Combine(_outDir, name);
-        var doc = new RawRelationsDocument(format, _metadata, buffer);
-        using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+        var createsBatch = batchCount == 0;
+        using var stream = new FileStream(
+            path,
+            createsBatch ? FileMode.CreateNew : FileMode.Append,
+            FileAccess.Write,
+            FileShare.Read);
         using var writer = new StreamWriter(stream);
-        RawRelationsFile.Write(writer, doc);
-        _artifacts.Add(name);
-        batch++;
+        if (createsBatch)
+        {
+            RawRelationsFile.Write(
+                writer,
+                new RawRelationsDocument(format, _metadata, buffer));
+            _artifacts.Add(name);
+        }
+        else
+        {
+            RawRelationsFile.WriteRecords(writer, format, buffer);
+        }
+
+        writer.Flush();
+        if (durable)
+        {
+            stream.Flush(flushToDisk: true);
+        }
+
+        batchCount += buffer.Count;
+        buffer.Clear();
+        if (batchCount >= _batchSize)
+        {
+            batch++;
+            batchCount = 0;
+        }
     }
 
     private static int NextBatchIndex(string outDir, string prefix)
@@ -161,7 +205,7 @@ public sealed class RawRelationBatchFileSink : IRawRelationSink
     private static IEnumerable<string> ExistingBatchNames(string outDir, string prefix)
         => ExistingBatchIndexes(outDir, prefix)
             .Order()
-            .Select(index => $"{prefix}_{index:D4}.txt");
+            .Select(index => RawBatchFileName.Create(prefix, index).FileName);
 
     private static IEnumerable<int> ExistingBatchIndexes(string outDir, string prefix)
     {
@@ -172,18 +216,9 @@ public sealed class RawRelationBatchFileSink : IRawRelationSink
 
         foreach (var path in Directory.EnumerateFiles(outDir, $"{prefix}_*.txt"))
         {
-            var name = Path.GetFileName(path);
-            if (name.Length != prefix.Length + 1 + 4 + ".txt".Length ||
-                !name.StartsWith(prefix + "_", StringComparison.Ordinal) ||
-                !name.EndsWith(".txt", StringComparison.Ordinal))
+            if (RawBatchFileName.TryParse(Path.GetFileName(path), prefix, out var batch))
             {
-                continue;
-            }
-
-            var digits = name.AsSpan(prefix.Length + 1, 4);
-            if (int.TryParse(digits, out var index))
-            {
-                yield return index;
+                yield return batch.Index;
             }
         }
     }

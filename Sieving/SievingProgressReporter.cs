@@ -14,7 +14,8 @@ internal static class SievingProgressReporter
         long partialCount,
         long approxUsable,
         int factorBaseCount,
-        SievingParameters parameters)
+        SievingParameters parameters,
+        int activeAFamilies)
     {
         var counterMap = new Dictionary<string, string>
         {
@@ -26,6 +27,7 @@ internal static class SievingProgressReporter
             ["relations_needed"] = parameters.RelationTarget.ToString(),
             ["projected_matrix_rows"] = approxUsable.ToString(),
             ["projected_matrix_columns"] = (factorBaseCount + 1L).ToString(),
+            ["active_a_families"] = activeAFamilies.ToString(),
         };
         if (parameters.EnableTwoLargePrimes)
         {

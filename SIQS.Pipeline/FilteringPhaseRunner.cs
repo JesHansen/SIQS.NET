@@ -22,7 +22,8 @@ internal sealed class FilteringPhaseRunner
         var options = new FilteringOptions(
             LargePrimeBound: partialMetadata?.LargePrimeBound,
             LargePrime2Bound: partialMetadata?.LargePrime2Bound,
-            SpillDirectory: spillDirectory);
+            SpillDirectory: spillDirectory,
+            EnableTwoMerge: true);
         var result = FilteringEngine.Run(factorBase, fulls, partials, options, context.Progress);
 
         PhaseArtifactStore.Write(context, "relations_filtered.txt",
@@ -43,6 +44,7 @@ internal sealed class FilteringPhaseRunner
                 ["factor_base_columns"] = result.Meta.FactorBaseCount.ToString(),
                 ["combined_partials"] = result.Counters.CombinedPartials.ToString(),
                 ["rejected_cycles"] = result.Counters.RejectedCycles.ToString(),
+                ["two_merges"] = result.Counters.TwoMerges.ToString(),
                 ["surplus_rows_trimmed"] = result.Counters.SurplusRowsTrimmed.ToString(),
                 ["duplicates_removed"] = result.Counters.DuplicatesRemoved.ToString(),
                 ["singleton_pruned"] = result.Counters.SingletonPruned.ToString(),

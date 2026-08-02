@@ -52,13 +52,7 @@ public static class RawRelationsFile
 
     public static void Write(TextWriter writer, RawRelationsDocument document)
     {
-        if (document.Format is not (FileFormats.RawRelationsV1 or FileFormats.RawPartialsV1
-            or FileFormats.RawRelationsV2 or FileFormats.RawPartialsV2))
-        {
-            throw new ArgumentException($"Unexpected raw relations format '{document.Format}'.", nameof(document));
-        }
-
-        var isV2 = document.Format is FileFormats.RawRelationsV2 or FileFormats.RawPartialsV2;
+        var isV2 = IsV2Format(document.Format, nameof(document));
         var m = document.Metadata;
         WriteLine(writer, MetadataFormat.Comment("format", document.Format));
         WriteLine(writer, MetadataFormat.Comment("target_n", Dec(m.TargetN)));
@@ -75,7 +69,20 @@ public static class RawRelationsFile
         WriteLine(writer, MetadataFormat.Comment("columns", isV2 ? ColumnsValueV2 : ColumnsValue));
         WriteLine(writer, isV2 ? ColumnsValueV2 : ColumnsValue);
 
-        foreach (var r in document.Relations)
+        WriteRecords(writer, document.Format, document.Relations);
+    }
+
+    /// <summary>
+    /// Appends relation rows without another metadata header. The destination must already contain
+    /// a header written with the same format.
+    /// </summary>
+    public static void WriteRecords(
+        TextWriter writer,
+        string format,
+        IEnumerable<RawRelationRecord> relations)
+    {
+        var isV2 = IsV2Format(format, nameof(format));
+        foreach (var r in relations)
         {
             WriteLine(writer, Csv.WriteLine(new[]
             {
@@ -94,6 +101,17 @@ public static class RawRelationsFile
                     : r.LargePrime.HasValue ? Dec(r.LargePrime.Value) : string.Empty,
             }));
         }
+    }
+
+    private static bool IsV2Format(string format, string parameterName)
+    {
+        if (format is not (FileFormats.RawRelationsV1 or FileFormats.RawPartialsV1
+            or FileFormats.RawRelationsV2 or FileFormats.RawPartialsV2))
+        {
+            throw new ArgumentException($"Unexpected raw relations format '{format}'.", parameterName);
+        }
+
+        return format is FileFormats.RawRelationsV2 or FileFormats.RawPartialsV2;
     }
 
     /// <summary>Parses full raw relations/partials text into a document.</summary>

@@ -8,6 +8,28 @@ public class RawRelationsFileTests
     private static RawRelationsMetadata Meta() => new(
         TargetN: 77, Multiplier: 1, ScaledN: 77, FactorBaseBound: 2, LargePrimeBound: 128);
 
+    [Theory]
+    [InlineData("relations_0000.txt", "relations", 0)]
+    [InlineData("partials_9999.txt", "partials", 9999)]
+    [InlineData("relations_10000.txt", "relations", 10000)]
+    public void Parses_canonical_raw_batch_file_names(string fileName, string prefix, int expectedIndex)
+    {
+        Assert.True(RawBatchFileName.TryParse(fileName, prefix, out var batch));
+        Assert.Equal(expectedIndex, batch.Index);
+        Assert.Equal(fileName, batch.FileName);
+    }
+
+    [Theory]
+    [InlineData("relations_000.txt")]
+    [InlineData("relations_00000.txt")]
+    [InlineData("relations_10000.tmp")]
+    [InlineData("relations_abcd.txt")]
+    [InlineData("partials_10000.txt")]
+    public void Rejects_noncanonical_raw_batch_file_names(string fileName)
+    {
+        Assert.False(RawBatchFileName.TryParse(fileName, "relations", out _));
+    }
+
     [Fact]
     public void Writes_full_relation_with_example_shape()
     {

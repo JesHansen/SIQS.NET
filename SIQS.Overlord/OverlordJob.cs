@@ -44,14 +44,15 @@ public sealed record OverlordJobSnapshot(
     int RelationTarget,
     LeaseLedgerSnapshot? Leases,
     DiscoveredFactors Factors,
-    string? Error);
+    string? Error,
+    RelationInboxSnapshot? Inbox);
 
 /// <summary>
 /// Holds the state of the one active distributed job: the descriptor clients need, the lease ledger,
 /// the relation ingest, and a completion signal the distributed sieving phase awaits. The pipeline
 /// runs on a background task (see <see cref="OverlordService"/>) and drives this through
 /// <see cref="BeginSieving"/> / <see cref="Finish"/> / <see cref="Fault"/>; client requests drive it
-/// through <see cref="TryLease"/> / <see cref="AcceptUpload"/>.
+/// through <see cref="TryLease"/> and the durable chunk-upload methods.
 /// </summary>
 public sealed class OverlordJob
 {
@@ -62,8 +63,8 @@ public sealed class OverlordJob
     private JobDescriptor? _descriptor;
     private LeaseLedger? _ledger;
     private RelationIngest? _ingest;
+    private DurableRelationInbox? _inbox;
     private int _relationTarget;
-    private TimeSpan _leaseTtl;
     private TimeSpan _uploadGracePeriod;
     private int _sieveGeneration;
     private DiscoveredFactors _factors = DiscoveredFactors.None;
@@ -92,6 +93,7 @@ public sealed class OverlordJob
         JobDescriptor descriptor,
         LeaseLedger ledger,
         RelationIngest ingest,
+        DurableRelationInbox inbox,
         int relationTarget,
         TimeSpan uploadGracePeriod)
     {
@@ -100,6 +102,7 @@ public sealed class OverlordJob
             _descriptor = descriptor;
             _ledger = ledger;
             _ingest = ingest;
+            _inbox = inbox;
             _relationTarget = relationTarget;
             _uploadGracePeriod = uploadGracePeriod;
             _sieveGeneration++;
@@ -107,10 +110,11 @@ public sealed class OverlordJob
             Phase = OverlordPhase.Sieving;
         }
 
+        inbox.Start();
         RaiseChanged();
     }
 
-    /// <summary>Completed by <see cref="AcceptUpload"/> (converged) or lease exhaustion; cancelled with the token.</summary>
+    /// <summary>Completed by durable background ingestion or lease exhaustion; cancelled with the token.</summary>
     public Task<SieveOutcome> WaitForSieveCompletionAsync(CancellationToken cancellationToken)
     {
         lock (_gate)
@@ -119,18 +123,20 @@ public sealed class OverlordJob
         }
     }
 
-    public LeaseResponse? TryLease(TimeSpan ttl)
+    public LeaseResponse? TryLease(TimeSpan ttl, int chunkSize)
     {
         LeaseLedger.Lease? lease;
         lock (_gate)
         {
-            if (Phase != OverlordPhase.Sieving || _ledger is null)
+            if (Phase != OverlordPhase.Sieving ||
+                _ledger is null ||
+                _inbox is null ||
+                !_inbox.CanAcceptLease)
             {
                 return null;
             }
 
-            _leaseTtl = ttl;
-            lease = _ledger.TryLease(ttl, DateTimeOffset.UtcNow);
+            lease = _ledger.TryLease(ttl, DateTimeOffset.UtcNow, chunkSize);
         }
 
         if (lease is null)
@@ -143,185 +149,124 @@ public sealed class OverlordJob
         return new LeaseResponse(JobId, lease.LeaseId, lease.Start, lease.End, lease.ExpiresUtc);
     }
 
-    public UploadResponse AcceptUpload(string leaseId, IReadOnlyCollection<RawRelationRecord> relations)
-    {
-        var upload = BeginUpload(leaseId);
-        if (upload is null)
-        {
-            return new UploadResponse(false, 0, 0, "Job is not accepting relations.");
-        }
-
-        upload.Ingest(relations);
-        return upload.Complete();
-    }
-
-    internal UploadSession? BeginUpload(string leaseId)
+    internal DurableRelationInbox? BeginChunkUpload(string leaseId, TimeSpan ttl)
     {
         lock (_gate)
         {
-            if (Phase is not (OverlordPhase.Sieving or OverlordPhase.Draining) || _ingest is null || _ledger is null)
+            if (Phase is not (OverlordPhase.Sieving or OverlordPhase.Draining) ||
+                _ledger is null ||
+                _inbox is null ||
+                !_ledger.BeginUpload(leaseId, ttl, DateTimeOffset.UtcNow))
             {
                 return null;
             }
 
-            _ledger.Renew(leaseId, _leaseTtl, DateTimeOffset.UtcNow);
-            return new UploadSession(this, _sieveGeneration, leaseId, _ingest, _ledger);
+            return _inbox;
         }
     }
 
-    private UploadResponse CompleteUpload(
-        int generation, string leaseId, LeaseLedger ledger, int accepted, int rejected, bool discarded)
+    internal void EndChunkUpload(string leaseId, TimeSpan ttl)
     {
-        var leaseCompleted = ledger.Complete(leaseId);
-        if (IsCurrentSieveGeneration(generation))
+        lock (_gate)
         {
-            CheckExhaustion();
+            _ledger?.EndUpload(leaseId, ttl, DateTimeOffset.UtcNow);
         }
 
         RaiseChanged();
-        return new UploadResponse(
-            !discarded || accepted > 0,
-            accepted,
-            rejected,
-            discarded
-                ? "The upload grace period expired; late relations were discarded."
-                : !leaseCompleted
-                    ? "Relations were accepted, but the lease expired before completion; its A-range may be reassigned."
-                    : null);
     }
 
-    private (int Accepted, int Rejected, bool Discarded) IngestUploadBatch(
-        int generation,
-        string leaseId,
-        RelationIngest ingest,
-        LeaseLedger ledger,
-        IReadOnlyCollection<RawRelationRecord> relations)
+    internal void AbandonLease(string leaseId)
     {
-        var startGracePeriod = false;
-        (int Accepted, int Rejected) result;
         lock (_gate)
         {
-            // This gate is deliberately held through ingest. The grace-period timer takes the same
-            // gate, so filtering cannot start while a final accepted batch is writing to disk.
-            if (generation != _sieveGeneration || Phase is not (OverlordPhase.Sieving or OverlordPhase.Draining))
+            _ledger?.Abandon(leaseId);
+        }
+
+        RaiseChanged();
+    }
+
+    internal DurableRelationInbox? ProtectLeaseForIngest(string leaseId)
+    {
+        lock (_gate)
+        {
+            if (Phase is not (OverlordPhase.Sieving or OverlordPhase.Draining) ||
+                _ledger is null ||
+                _inbox is null ||
+                !_ledger.ProtectPendingIngest(leaseId, DateTimeOffset.UtcNow))
             {
-                return (0, 0, true);
+                return null;
             }
 
-            // A large-number lease can run well beyond the original TTL. Every received transport
-            // batch proves liveness, so extend the lease before a UI snapshot can reclaim its range.
-            ledger.Renew(leaseId, _leaseTtl, DateTimeOffset.UtcNow);
-            result = ingest.Ingest(relations);
+            return _inbox;
+        }
+    }
+
+    internal void CancelLeaseIngestProtection(string leaseId, TimeSpan ttl)
+    {
+        lock (_gate)
+        {
+            _ledger?.CancelPendingIngest(leaseId, ttl, DateTimeOffset.UtcNow);
+        }
+    }
+
+    internal (int Accepted, int Rejected) IngestDurableChunk(
+        IReadOnlyCollection<RawRelationRecord> relations)
+    {
+        RelationIngest ingest;
+        lock (_gate)
+        {
+            if (Phase is not (OverlordPhase.Sieving or OverlordPhase.Draining) || _ingest is null)
+            {
+                return (0, relations.Count);
+            }
+
+            ingest = _ingest;
+        }
+
+        var result = ingest.Ingest(relations);
+        var startGracePeriod = false;
+        var generation = 0;
+        lock (_gate)
+        {
             if (Phase == OverlordPhase.Sieving && ingest.UsableCount >= _relationTarget)
             {
                 Phase = OverlordPhase.Draining;
+                generation = _sieveGeneration;
                 startGracePeriod = true;
             }
         }
 
-        // The UI already throttles Changed notifications. Publishing every bounded ingest batch
-        // keeps live relation counts visible without coupling rendering to individual records.
         RaiseChanged();
         if (startGracePeriod)
         {
-            _ = CompleteUploadGracePeriodAsync(generation, _uploadGracePeriod);
+            _ = FinishAfterInboxDrainAsync(generation, _uploadGracePeriod, SieveOutcome.Converged);
         }
 
-        return (result.Accepted, result.Rejected, false);
+        return result;
     }
 
-    private async Task CompleteUploadGracePeriodAsync(int generation, TimeSpan gracePeriod)
+    internal void CompleteDurableLease(string leaseId, bool succeeded)
     {
-        await Task.Delay(gracePeriod).ConfigureAwait(false);
-
-        TaskCompletionSource<SieveOutcome> completion;
+        LeaseLedger? ledger;
         lock (_gate)
         {
-            if (generation != _sieveGeneration || Phase != OverlordPhase.Draining)
-            {
-                return;
-            }
-
-            // Any later Ingest call observes Finishing under this same gate and discards its batch.
-            Phase = OverlordPhase.Finishing;
-            completion = _sieveCompletion;
+            ledger = _ledger;
         }
 
-        completion.TrySetResult(SieveOutcome.Converged);
+        if (ledger is not null)
+        {
+            if (succeeded)
+            {
+                ledger.Complete(leaseId);
+            }
+            else
+            {
+                ledger.FailPendingIngest(leaseId);
+            }
+        }
+
+        CheckExhaustion();
         RaiseChanged();
-    }
-
-    internal sealed class UploadSession
-    {
-        private readonly OverlordJob _job;
-        private readonly int _generation;
-        private readonly string _leaseId;
-        private readonly RelationIngest _ingest;
-        private readonly LeaseLedger _ledger;
-        private int _accepted;
-        private int _rejected;
-        private bool _discarded;
-        private int _state;
-
-        internal UploadSession(
-            OverlordJob job,
-            int generation,
-            string leaseId,
-            RelationIngest ingest,
-            LeaseLedger ledger)
-        {
-            _job = job;
-            _generation = generation;
-            _leaseId = leaseId;
-            _ingest = ingest;
-            _ledger = ledger;
-        }
-
-        public bool IsAccepting => _job.IsAcceptingUploadRecords(_generation);
-
-        public void Ingest(IReadOnlyCollection<RawRelationRecord> relations)
-        {
-            if (Volatile.Read(ref _state) != 0)
-            {
-                throw new InvalidOperationException("The relation upload is no longer active.");
-            }
-
-            var (accepted, rejected, discarded) = _job.IngestUploadBatch(
-                _generation, _leaseId, _ingest, _ledger, relations);
-            _accepted = checked(_accepted + accepted);
-            _rejected = checked(_rejected + rejected);
-            _discarded |= discarded;
-        }
-
-        public void DiscardRemaining() => _discarded = true;
-
-        public UploadResponse Complete()
-        {
-            if (Interlocked.CompareExchange(ref _state, 1, 0) != 0)
-            {
-                throw new InvalidOperationException("The relation upload is no longer active.");
-            }
-
-            return _job.CompleteUpload(
-                _generation, _leaseId, _ledger, _accepted, _rejected, _discarded);
-        }
-    }
-
-    private bool IsAcceptingUploadRecords(int generation)
-    {
-        lock (_gate)
-        {
-            return generation == _sieveGeneration &&
-                Phase is (OverlordPhase.Sieving or OverlordPhase.Draining);
-        }
-    }
-
-    private bool IsCurrentSieveGeneration(int generation)
-    {
-        lock (_gate)
-        {
-            return generation == _sieveGeneration;
-        }
     }
 
     /// <summary>Marks the pipeline finished and records the factors it found (empty if none).</summary>
@@ -360,7 +305,8 @@ public sealed class OverlordJob
                 _relationTarget,
                 _ledger?.Snapshot(DateTimeOffset.UtcNow),
                 _factors,
-                Error);
+                Error,
+                _inbox?.Snapshot());
         }
     }
 
@@ -377,7 +323,7 @@ public sealed class OverlordJob
             return;
         }
 
-        TaskCompletionSource<SieveOutcome> completion;
+        var generation = 0;
         lock (_gate)
         {
             if (Phase != OverlordPhase.Sieving)
@@ -385,13 +331,53 @@ public sealed class OverlordJob
                 return;
             }
 
-            // Taking the gate closes ingestion atomically. Existing request bodies can continue to
-            // arrive, but their sessions will discard rather than mutate the completed sieve output.
+            Phase = OverlordPhase.Draining;
+            generation = _sieveGeneration;
+        }
+
+        RaiseChanged();
+        _ = FinishAfterInboxDrainAsync(generation, TimeSpan.Zero, SieveOutcome.Exhausted);
+    }
+
+    private async Task FinishAfterInboxDrainAsync(
+        int generation,
+        TimeSpan delay,
+        SieveOutcome outcome)
+    {
+        if (delay > TimeSpan.Zero)
+        {
+            await Task.Delay(delay).ConfigureAwait(false);
+        }
+
+        DurableRelationInbox? inbox;
+        lock (_gate)
+        {
+            if (generation != _sieveGeneration || Phase != OverlordPhase.Draining)
+            {
+                return;
+            }
+
+            inbox = _inbox;
+        }
+
+        if (inbox is not null)
+        {
+            await inbox.SealAndDrainAsync().ConfigureAwait(false);
+        }
+
+        TaskCompletionSource<SieveOutcome> completion;
+        lock (_gate)
+        {
+            if (generation != _sieveGeneration || Phase != OverlordPhase.Draining)
+            {
+                return;
+            }
+
             Phase = OverlordPhase.Finishing;
             completion = _sieveCompletion;
         }
 
-        completion.TrySetResult(SieveOutcome.Exhausted);
+        completion.TrySetResult(outcome);
         RaiseChanged();
     }
 

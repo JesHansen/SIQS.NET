@@ -13,6 +13,7 @@
   <Project Path="QS.Sieve/QS.Sieve.csproj" />
   <Project Path="QS.Sqrt/QS.Sqrt.csproj" />
   <Project Path="QS/QS.csproj" />
+  <Project Path="QS.SieveClient.Tests/QS.SieveClient.Tests.csproj" />
   <Project Path="QS.SieveClient/QS.SieveClient.csproj" />
   <Project Path="Sieving.Tests/Sieving.Tests.csproj" />
   <Project Path="Sieving/Sieving.csproj" />

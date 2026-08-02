@@ -10,6 +10,7 @@ public sealed class FilteringCounters
     public int RawPartials { get; set; }
     public int CombinedPartials { get; set; }
     public int RejectedCycles { get; set; }
+    public int TwoMerges { get; set; }
     public int SurplusRowsTrimmed { get; set; }
     public int DuplicatesRemoved { get; set; }
     public int RedundantColumnsMerged { get; set; }

@@ -52,7 +52,7 @@ public class FilteringEngineTests
     }
 
     private static FilteringResult Run(FactorBaseDocument fb, RawRelationRecord[] full, RawRelationRecord[] partials)
-        => FilteringEngine.Run(fb, full, partials);
+        => FilteringEngine.Run(fb, full, partials, new FilteringOptions(EnableTwoMerge: false));
 
     [Fact]
     public void Combines_matching_partials_and_squares_away_large_prime()
@@ -116,6 +116,66 @@ public class FilteringEngineTests
         Assert.Equal(new[] { "R00000000", "R00000001", "R00000002" }, combined.SourceRelationIds);
         Assert.Empty(combined.ParityColumns);
         Assert.Equal(new BigInteger[] { 101, 103, 107 }, combined.LargePrimes.OrderBy(x => x));
+    }
+
+    [Fact]
+    public void Acyclic_fringe_does_not_prevent_parallel_cycle_extraction()
+    {
+        var fb = FactorBase(5);
+        var partials = new[]
+        {
+            Partial2("R00000000", 101, 103, new Dictionary<int, int> { [1] = 1 }),
+            Partial2("R00000001", 103, 107, new Dictionary<int, int> { [1] = 1 }),
+            Partial2("R00000002", 109, 113, new Dictionary<int, int> { [2] = 1 }),
+            Partial2("R00000003", 109, 113, new Dictionary<int, int> { [2] = 1 }),
+        };
+
+        var result = Run(fb, Array.Empty<RawRelationRecord>(), partials);
+
+        var combined = Assert.Single(result.Relations.Relations);
+        Assert.Equal(new[] { "R00000002", "R00000003" }, combined.SourceRelationIds);
+    }
+
+    [Fact]
+    public void Distinct_one_large_prime_edges_do_not_form_a_cycle_through_vertex_zero()
+    {
+        var fb = FactorBase(5);
+        var partials = new[]
+        {
+            Partial("R00000000", 101, new Dictionary<int, int> { [1] = 1 }),
+            Partial("R00000001", 103, new Dictionary<int, int> { [2] = 1 }),
+            Partial("R00000002", 107, new Dictionary<int, int> { [3] = 1 }),
+        };
+
+        var result = Run(fb, Array.Empty<RawRelationRecord>(), partials);
+
+        Assert.Empty(result.Relations.Relations);
+    }
+
+    [Fact]
+    public void Cycle_length_cap_rejects_long_cycle_and_keeps_short_cycle()
+    {
+        var fb = FactorBase(5);
+        var partials = new[]
+        {
+            Partial2("R00000000", 101, 103, new Dictionary<int, int> { [1] = 1 }),
+            Partial2("R00000001", 103, 107, new Dictionary<int, int> { [1] = 1 }),
+            Partial2("R00000002", 101, 107, new Dictionary<int, int> { [1] = 1 }),
+            Partial2("R00000003", 109, 113, new Dictionary<int, int> { [2] = 1 }),
+            Partial2("R00000004", 109, 113, new Dictionary<int, int> { [2] = 1 }),
+        };
+
+        var result = FilteringEngine.Run(
+            fb,
+            Array.Empty<RawRelationRecord>(),
+            partials,
+            new FilteringOptions(MaxCycleLength: 2));
+
+        Assert.Equal(1, result.Counters.RejectedCycles);
+        Assert.Equal(1, result.Counters.CombinedPartials);
+        Assert.Equal(2, result.Counters.MaxCycleLength);
+        var combined = Assert.Single(result.Relations.Relations);
+        Assert.Equal(new[] { "R00000003", "R00000004" }, combined.SourceRelationIds);
     }
 
     [Fact]
@@ -216,6 +276,108 @@ public class FilteringEngineTests
         var rowsById = result.Matrix.ToDictionary(r => r.RelationId, r => r.Columns);
         Assert.Equal(rowsById["F00000000"].Count, rowsById["F00000001"].Count);
         Assert.All(result.Matrix, r => Assert.True(r.Columns.Count >= 2));
+    }
+
+    [Fact]
+    public void Two_merge_eliminates_weight_two_column_and_preserves_provenance()
+    {
+        var fb = FactorBase(6);
+        var rows = new[]
+        {
+            Full("R00000000", 1, 2, 3),
+            Full("R00000001", 1, 2, 4),
+            Full("R00000002", 3, 4),
+            Full("R00000003", 3, 4),
+        };
+
+        var result = FilteringEngine.Run(
+            fb,
+            rows,
+            Array.Empty<RawRelationRecord>(),
+            new FilteringOptions(EnableTwoMerge: true));
+
+        Assert.Equal(1, result.Counters.TwoMerges);
+        Assert.Equal(3, result.Meta.RowCount);
+        var merged = Assert.Single(result.Relations.Relations,
+            relation => relation.SourceRelationIds.Count == 2);
+        Assert.Equal(new[] { "R00000000", "R00000001" }, merged.SourceRelationIds);
+        Assert.Equal(new[] { 3, 4 }, merged.ParityColumns);
+        Assert.Equal(
+            SIQS.Contracts.Numerics.IntegerMath.Mod(TFromId("R00000000") * TFromId("R00000001"), fb.Metadata.ScaledN),
+            merged.T);
+        Assert.Equal(2, merged.Exponents.GetValueOrDefault(1));
+        Assert.Equal(2, merged.Exponents.GetValueOrDefault(2));
+    }
+
+    [Fact]
+    public void Two_merge_preserves_squared_away_large_prime_factors()
+    {
+        var fb = FactorBase(5);
+        var partials = new[]
+        {
+            Partial("R00000000", 101, new Dictionary<int, int> { [1] = 1 }),
+            Partial("R00000001", 101, new Dictionary<int, int> { [2] = 1 }),
+            Partial("R00000002", 103, new Dictionary<int, int> { [1] = 1 }),
+            Partial("R00000003", 103, new Dictionary<int, int> { [3] = 1 }),
+        };
+        var fulls = new[]
+        {
+            Full("R00000004", 2, 3),
+            Full("R00000005", 2, 3),
+        };
+
+        var result = FilteringEngine.Run(
+            fb,
+            fulls,
+            partials,
+            new FilteringOptions(EnableTwoMerge: true));
+
+        Assert.Equal(1, result.Counters.TwoMerges);
+        var merged = Assert.Single(result.Relations.Relations,
+            relation => relation.SourceRelationIds.Count == 4);
+        Assert.Equal(RelationKind.CombinedPartial, merged.Kind);
+        Assert.Equal(new BigInteger[] { 101, 103 }, merged.LargePrimes);
+        Assert.Equal(new[] { 2, 3 }, merged.ParityColumns);
+    }
+
+    [Fact]
+    public void Two_merge_can_be_disabled()
+    {
+        var fb = FactorBase(6);
+        var rows = new[]
+        {
+            Full("R00000000", 1, 2, 3),
+            Full("R00000001", 1, 2, 4),
+            Full("R00000002", 3, 4),
+            Full("R00000003", 3, 4),
+        };
+
+        var result = FilteringEngine.Run(
+            fb,
+            rows,
+            Array.Empty<RawRelationRecord>(),
+            new FilteringOptions(EnableTwoMerge: false));
+
+        Assert.Equal(0, result.Counters.TwoMerges);
+        Assert.Equal(4, result.Meta.RowCount);
+    }
+
+    [Fact]
+    public void Two_merge_is_enabled_by_default()
+    {
+        var fb = FactorBase(6);
+        var rows = new[]
+        {
+            Full("R00000000", 1, 2, 3),
+            Full("R00000001", 1, 2, 4),
+            Full("R00000002", 3, 4),
+            Full("R00000003", 3, 4),
+        };
+
+        var result = FilteringEngine.Run(fb, rows, Array.Empty<RawRelationRecord>());
+
+        Assert.Equal(1, result.Counters.TwoMerges);
+        Assert.Equal(3, result.Meta.RowCount);
     }
 
     [Fact]

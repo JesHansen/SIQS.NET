@@ -87,25 +87,7 @@ internal static class PhaseArtifactStore
             .Where(path => IsNumberedBatch(Path.GetFileName(path), prefix));
 
     internal static bool IsNumberedBatch(string name, string prefix)
-    {
-        var expectedLength = prefix.Length + 1 + 4 + ".txt".Length;
-        if (name.Length != expectedLength ||
-            !name.StartsWith(prefix + "_", StringComparison.Ordinal) ||
-            !name.EndsWith(".txt", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        foreach (var c in name.AsSpan(prefix.Length + 1, 4))
-        {
-            if (!char.IsDigit(c))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
+        => RawBatchFileName.TryParse(name, prefix, out _);
 
     internal static void QuarantineCorruptTailBatch(
         string jobDirectory,
@@ -113,7 +95,11 @@ internal static class PhaseArtifactStore
         IProgress<SiqsProgressEvent>? progress)
     {
         var tail = EnumerateRawBatchFiles(jobDirectory, prefix)
-            .Select(path => (Path: path, Index: int.Parse(Path.GetFileName(path).AsSpan(prefix.Length + 1, 4), CultureInfo.InvariantCulture)))
+            .Select(path =>
+            {
+                RawBatchFileName.TryParse(Path.GetFileName(path), prefix, out var batch);
+                return (Path: path, batch.Index);
+            })
             .OrderByDescending(x => x.Index)
             .FirstOrDefault();
         if (tail.Path is null)
@@ -121,12 +107,32 @@ internal static class PhaseArtifactStore
             return;
         }
 
+        string? text = null;
         try
         {
-            RawRelationsFile.Parse(ArtifactFileIO.ReadAllText(tail.Path));
+            text = ArtifactFileIO.ReadAllText(tail.Path);
+            RawRelationsFile.Parse(text);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FormatException or ArgumentException)
         {
+            if (text is not null && TryRepairTruncatedTail(tail.Path, text, out var removedCharacters))
+            {
+                progress?.Report(new SiqsProgressEvent(
+                    DateTimeOffset.UtcNow,
+                    null,
+                    SiqsPhase.Sieving,
+                    ProgressLevel.Warning,
+                    "repaired truncated tail batch",
+                    Percent: null,
+                    Counters: new Dictionary<string, string>
+                    {
+                        ["batch"] = Path.GetFileName(tail.Path),
+                        ["removed_characters"] = removedCharacters.ToString(CultureInfo.InvariantCulture),
+                    },
+                    ArtifactPath: Path.GetFileName(tail.Path)));
+                return;
+            }
+
             var corrupt = UniqueCorruptPath(tail.Path);
             File.Move(tail.Path, corrupt);
             progress?.Report(new SiqsProgressEvent(
@@ -143,6 +149,54 @@ internal static class PhaseArtifactStore
                 },
                 ArtifactPath: Path.GetFileName(corrupt)));
         }
+    }
+
+    private static bool TryRepairTruncatedTail(string path, string text, out int removedCharacters)
+    {
+        removedCharacters = 0;
+        if (text.Length == 0)
+        {
+            return false;
+        }
+
+        var lastContentIndex = text[^1] == '\n' ? text.Length - 2 : text.Length - 1;
+        if (lastContentIndex < 0)
+        {
+            return false;
+        }
+
+        var previousLineBreak = text.LastIndexOf('\n', lastContentIndex);
+        if (previousLineBreak < 0)
+        {
+            return false;
+        }
+
+        var repaired = text[..(previousLineBreak + 1)];
+        try
+        {
+            RawRelationsFile.Parse(repaired);
+        }
+        catch (Exception ex) when (ex is FormatException or ArgumentException)
+        {
+            return false;
+        }
+
+        var temporaryPath = path + $".repair-{Guid.NewGuid():N}.tmp";
+        try
+        {
+            File.WriteAllText(temporaryPath, repaired);
+            File.Move(temporaryPath, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
+        }
+
+        removedCharacters = text.Length - repaired.Length;
+        return true;
     }
 
     internal static string UniqueCorruptPath(string path)

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Numerics;
 using SIQS.Contracts;
@@ -75,6 +76,7 @@ internal static class SieveRunCoordinator
 
         var totals = new WorkerTotals();
         var tally = new RelationTally();
+        var activeAFamilies = 0;
 
         if (resumeState is not null)
         {
@@ -110,110 +112,122 @@ internal static class SieveRunCoordinator
                     ? Enumerable.Range(0, aCandidates.Count)
                     : TrialSpreadOrder(aCandidates.Count);
 
+            var work = candidateOrder
+                .Where(i => !completedAIndices.Contains(i))
+                .Select(i => (AIdx: i, Positions: aCandidates[i]));
+            var workPartitioner = CreateWorkPartitioner(work);
             Parallel.ForEach(
-                candidateOrder
-                    .Where(i => !completedAIndices.Contains(i))
-                    .Select(i => (AIdx: i, Positions: aCandidates[i])),
+                workPartitioner,
                 pOpts,
                 () => new PolynomialSieveWorker(Math.Min(blockLength, parameters.EffectiveSieveBlockSize)),
                 (item, state, worker) =>
                 {
-                    if (!sliceMode &&
-                        (StopReached(parameters, tally.FullCount, tally.UsefulFullCount, tally.PartialCount, tally.UsablePairs) ||
-                        tally.PolyCount >= parameters.PolynomialCount))
+                    Interlocked.Increment(ref activeAFamilies);
+                    try
                     {
-                        state.Stop();
-                        return worker;
-                    }
-
-                    var t0 = Stopwatch.GetTimestamp();
-                    var family = PolynomialGenerator.BuildFamily(fb, item.Positions);
-                    var isAPrime = new bool[fb.Count];
-                    foreach (var pos in item.Positions) isAPrime[pos] = true;
-
-                    // inverse(A) mod p is fixed for the whole B-family of this A.
-                    var invA = new long[fb.Count];
-                    for (var i = 0; i < fb.Count; i++)
-                    {
-                        if (!isAPrime[i] && fb.Primes[i] != 2)
-                            invA[i] = IntegerMath.ModInverse((long)IntegerMath.Mod(family.A, fb.Primes[i]), fb.Primes[i]);
-                    }
-
-                    var grayRootDeltas = PrecomputeGrayRootDeltas(fb, family.BTerms, isAPrime, invA);
-                    worker.Metrics.Ticks.Setup += Stopwatch.GetTimestamp() - t0;
-
-                    var polyInFamily = 0;
-                    foreach (var member in family.Members)
-                    {
-                        if (state.ShouldExitCurrentIteration) break;
-                        var poly = member.Polynomial;
-
-                        var polySeq = tally.IncrementPolyCount();
-                        if (!sliceMode && polySeq > parameters.PolynomialCount)
+                        if (!sliceMode &&
+                            (StopReached(parameters, tally.FullCount, tally.UsefulFullCount, tally.PartialCount, tally.UsablePairs) ||
+                            tally.PolyCount >= parameters.PolynomialCount))
                         {
                             state.Stop();
-                            break;
+                            return worker;
                         }
 
-                        var currentPolyInFamily = polyInFamily;
-                        var sieveContext = new PolynomialSieveContext(
-                            fb, blockLength, m, poly, isAPrime, invA, member, grayRootDeltas,
-                            parameters, item.AIdx, currentPolyInFamily, byteLogP, byteRescale,
-                            smallPrimeMasks.Masks, smallPrimeMasks.NextPhase, smallPrimeMasks.Count);
-                        worker.SieveAndScanBlocked(sieveContext);
-                        polyInFamily++;
+                        var t0 = Stopwatch.GetTimestamp();
+                        var family = PolynomialGenerator.BuildFamily(fb, item.Positions);
+                        var isAPrime = new bool[fb.Count];
+                        foreach (var pos in item.Positions) isAPrime[pos] = true;
 
-                        // Update shared counters for every new relation found this poly.
-                        // Full relations: increment the shared full-relation count.
-                        // Partial relations: update the shared large-prime dictionary; when a second
-                        // partial with the same large prime is seen, increment the shared usable-pair count.
-                        foreach (var tagged in worker.Pending)
+                        // inverse(A) mod p is fixed for the whole B-family of this A.
+                        var invA = new long[fb.Count];
+                        for (var i = 0; i < fb.Count; i++)
                         {
-                            var record = tagged.WithStableIds();
-                            if (!tally.TryRemember(record, out var duplicate))
-                            {
-                                if (duplicate)
-                                {
-                                    if (tagged.IsPartial)
-                                    {
-                                        worker.Metrics.Relations.Partials--;
-                                        if (record.LargePrimes.Count == 1) worker.Metrics.Relations.OneLargePrimePartials--;
-                                        else if (record.LargePrimes.Count == 2) worker.Metrics.Relations.TwoLargePrimePartials--;
-                                    }
-                                    else
-                                    {
-                                        worker.Metrics.Relations.Fulls--;
-                                    }
+                            if (!isAPrime[i] && fb.Primes[i] != 2)
+                                invA[i] = IntegerMath.ModInverse((long)IntegerMath.Mod(family.A, fb.Primes[i]), fb.Primes[i]);
+                        }
 
-                                    continue;
-                                }
+                        var grayRootDeltas = PrecomputeGrayRootDeltas(fb, family.BTerms, isAPrime, invA);
+                        worker.Metrics.Ticks.Setup += Stopwatch.GetTimestamp() - t0;
+
+                        var polyInFamily = 0;
+                        foreach (var member in family.Members)
+                        {
+                            if (state.ShouldExitCurrentIteration) break;
+                            var poly = member.Polynomial;
+
+                            var polySeq = tally.IncrementPolyCount();
+                            if (!sliceMode && polySeq > parameters.PolynomialCount)
+                            {
+                                state.Stop();
+                                break;
                             }
 
-                            tally.Count(record, includeInTotals: false);
-                            sink.Add(record);
-                        }
-                        worker.Pending.Clear();
+                            var currentPolyInFamily = polyInFamily;
+                            var sieveContext = new PolynomialSieveContext(
+                                fb, blockLength, m, poly, isAPrime, invA, member, grayRootDeltas,
+                                parameters, item.AIdx, currentPolyInFamily, byteLogP, byteRescale,
+                                smallPrimeMasks.Masks, smallPrimeMasks.NextPhase, smallPrimeMasks.Count);
+                            worker.SieveAndScanBlocked(sieveContext);
+                            polyInFamily++;
 
-                        var usable = tally.UsefulFullCount + tally.UsablePairs;
-                        if (!sliceMode && StopReached(parameters, tally.FullCount, tally.UsefulFullCount, tally.PartialCount, tally.UsablePairs))
-                        {
-                            state.Stop();
-                            break;
+                            // Update shared counters for every new relation found this poly.
+                            // Full relations: increment the shared full-relation count.
+                            // Partial relations: update the shared large-prime dictionary; when a second
+                            // partial with the same large prime is seen, increment the shared usable-pair count.
+                            foreach (var tagged in worker.Pending)
+                            {
+                                var record = tagged.WithStableIds();
+                                if (!tally.TryRemember(record, out var duplicate))
+                                {
+                                    if (duplicate)
+                                    {
+                                        if (tagged.IsPartial)
+                                        {
+                                            worker.Metrics.Relations.Partials--;
+                                            if (record.LargePrimes.Count == 1) worker.Metrics.Relations.OneLargePrimePartials--;
+                                            else if (record.LargePrimes.Count == 2) worker.Metrics.Relations.TwoLargePrimePartials--;
+                                        }
+                                        else
+                                        {
+                                            worker.Metrics.Relations.Fulls--;
+                                        }
+
+                                        continue;
+                                    }
+                                }
+
+                                tally.Count(record, includeInTotals: false);
+                                sink.Add(record);
+                            }
+                            worker.Pending.Clear();
+
+                            var usable = tally.UsefulFullCount + tally.UsablePairs;
+                            if (!sliceMode && StopReached(parameters, tally.FullCount, tally.UsefulFullCount, tally.PartialCount, tally.UsablePairs))
+                            {
+                                state.Stop();
+                                break;
+                            }
+
+                            if (polySeq % 256 == 0)
+                            {
+                                SievingProgressReporter.ReportShared(
+                                    progress, tally.PolyCount, tally.FullCount, tally.PartialCount,
+                                    usable, fb.Count, parameters, Volatile.Read(ref activeAFamilies));
+                            }
                         }
 
-                        if (polySeq % 256 == 0)
+                        if (polyInFamily == family.Members.Count)
                         {
-                            SievingProgressReporter.ReportShared(progress, tally.PolyCount, tally.FullCount, tally.PartialCount, usable, fb.Count, parameters);
+                            sink.Flush();
+                            resumeState?.MarkAIndexCompleted?.Invoke(item.AIdx);
                         }
+
+                        return worker;
                     }
-
-                    if (polyInFamily == family.Members.Count)
+                    finally
                     {
-                        sink.Flush();
-                        resumeState?.MarkAIndexCompleted?.Invoke(item.AIdx);
+                        Interlocked.Decrement(ref activeAFamilies);
                     }
-
-                    return worker;
                 },
                 worker => totals.Add(worker));
         }
@@ -285,6 +299,14 @@ internal static class SieveRunCoordinator
         SievingProgressReporter.Report(progress, counters, current: null);
         return counters;
     }
+
+    /// <summary>
+    /// Claims one A-family at a time. The default enumerable partitioner grows private chunks for
+    /// cheap loop bodies; an A-family takes seconds, so a worker owning a final multi-item chunk can
+    /// leave otherwise-idle workers unable to help at the end of a lease.
+    /// </summary>
+    internal static OrderablePartitioner<T> CreateWorkPartitioner<T>(IEnumerable<T> work)
+        => Partitioner.Create(work, EnumerablePartitionerOptions.NoBuffering);
 
     /// <summary>Stops sieving once the raw-relation trial target or the usable-relation target is met.</summary>
     private static bool StopReached(

@@ -1,17 +1,12 @@
-using System.Net;
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using System.Numerics;
 using System.Diagnostics;
-using System.Text.Json;
-using System.Threading.Channels;
 using Factorbase;
 using Sieving;
 using SIQS.Contracts;
 using SIQS.Contracts.Distributed;
 using SIQS.Contracts.Files;
 
-const string clientVersion = "2.0";
+const string clientVersion = "3.3";
 
 var serverUrl = (args.FirstOrDefault() ?? "http://localhost:5000").TrimEnd('/');
 using var http = new HttpClient { BaseAddress = new Uri(serverUrl), Timeout = Timeout.InfiniteTimeSpan };
@@ -21,7 +16,7 @@ Console.WriteLine($"SIQS distributed sieve client v{clientVersion} -> {serverUrl
 // Handshake: refuse to sieve for a server we cannot agree with.
 try
 {
-    var helloResult = await GetJson<HelloResponse>(
+    var helloResult = await ClientHttp.GetJsonAsync<HelloResponse>(
         http, HttpMethod.Post, "/api/dist/hello", new HelloRequest(clientVersion, DistProtocol.Version), CancellationToken.None);
     if (helloResult is null || !helloResult.Accepted)
     {
@@ -47,7 +42,7 @@ while (!cts.IsCancellationRequested)
 {
     try
     {
-        var descriptor = await GetJson<JobDescriptor>(http, HttpMethod.Get, "/api/dist/job", null, cts.Token);
+        var descriptor = await ClientHttp.GetJsonAsync<JobDescriptor>(http, HttpMethod.Get, "/api/dist/job", null, cts.Token);
         if (descriptor is null)
         {
             Console.WriteLine("No job available; waiting...");
@@ -58,10 +53,14 @@ while (!cts.IsCancellationRequested)
         if (context is null || context.JobId != descriptor.JobId)
         {
             context = ClientContext.Build(descriptor);
-            Console.WriteLine($"Joined job {descriptor.JobId} (N has {descriptor.N.Length} digits, {descriptor.ACount} A-candidates).");
+            Console.WriteLine(
+                $"Joined job {descriptor.JobId} (N has {descriptor.N.Length} digits, " +
+                $"{descriptor.ACount} A-candidates, {context.Parameters.EffectiveParallelism} sieve workers).");
         }
 
-        var lease = await GetJson<LeaseResponse>(http, HttpMethod.Post, "/api/dist/lease", null, cts.Token);
+        var leasePath = $"/api/dist/lease?parallelism={context.Parameters.EffectiveParallelism}";
+        var lease = await ClientHttp.GetJsonAsync<LeaseResponse>(
+            http, HttpMethod.Post, leasePath, null, cts.Token);
         if (lease is null)
         {
             await Task.Delay(idleDelay, cts.Token);
@@ -70,9 +69,18 @@ while (!cts.IsCancellationRequested)
 
         var range = new HashSet<int>(Enumerable.Range(lease.AStart, lease.AEnd - lease.AStart));
         using var leaseCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
-        using var leaseProgress = new ClientLeaseProgress(lease, queueCapacity: 256);
-        var sink = new StreamingRawRelationSink(capacity: 256, leaseCts.Token, leaseProgress);
-        var uploadTask = UploadRelations(http, lease, sink.Reader, leaseCts, leaseProgress, cts.Token);
+        using var leaseProgress = new ClientLeaseProgress(
+            lease,
+            ClientTransportSettings.ChannelCapacity,
+            ClientTransportSettings.RelationChunkCapacity,
+            ClientTransportSettings.MaxConcurrentUploads,
+            context.Parameters.EffectiveParallelism);
+        var sink = new StreamingRawRelationSink(
+            ClientTransportSettings.ChannelCapacity,
+            leaseCts.Token,
+            leaseProgress);
+        var uploadTask = RelationUploadPipeline.UploadAsync(
+            http, lease, sink.Reader, leaseCts, leaseProgress, cts.Token);
         Console.WriteLine(
             $"Lease {lease.LeaseId} [{lease.AStart}..{lease.AEnd}) received; sieving and streaming relations...");
 
@@ -84,22 +92,16 @@ while (!cts.IsCancellationRequested)
             var summary =
                 $"Lease {lease.LeaseId} [{lease.AStart}..{lease.AEnd}): " +
                 $"sieved {counters.FullRelations} full / {counters.Partials} partial";
-            if (result.Accepted)
+            if (result.Response.Accepted)
             {
-                var acceptedSummary =
-                    $"{summary} -> accepted {result.AcceptedCount}, rejected {result.RejectedCount}";
-                if (result.Reason is null)
-                {
-                    Console.WriteLine(acceptedSummary);
-                }
-                else
-                {
-                    Console.Error.WriteLine($"[{DateTimeOffset.Now:O}] {acceptedSummary}; {result.Reason}");
-                }
+                Console.WriteLine(
+                    $"{summary} -> durably uploaded {result.Relations} relations in {result.Chunks} chunks; " +
+                    $"server verification continues in the background; {leaseProgress.TransportSummary()}");
             }
             else
             {
-                Console.Error.WriteLine($"[{DateTimeOffset.Now:O}] {summary} -> upload declined: {result.Reason}");
+                Console.Error.WriteLine(
+                    $"[{DateTimeOffset.Now:O}] {summary} -> upload declined: {result.Response.Reason}");
             }
         }
         catch (Exception sieveException)
@@ -143,72 +145,10 @@ while (!cts.IsCancellationRequested)
 Console.WriteLine("Stopped.");
 return 0;
 
-// Sends an optional JSON body and returns the deserialized response, or null on 204 No Content.
-static async Task<T?> GetJson<T>(HttpClient http, HttpMethod method, string path, object? body, CancellationToken ct)
-{
-    using var request = new HttpRequestMessage(method, path);
-    if (body is not null)
-    {
-        request.Content = JsonContent.Create(body, body.GetType());
-    }
-
-    using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-    if (response.StatusCode == HttpStatusCode.NoContent)
-    {
-        return default;
-    }
-
-    await EnsureSuccess(response, ct);
-    return await response.Content.ReadFromJsonAsync<T>(ct);
-}
-
-static async Task EnsureSuccess(HttpResponseMessage response, CancellationToken ct)
-{
-    if (response.IsSuccessStatusCode)
-    {
-        return;
-    }
-
-    var detail = await response.Content.ReadAsStringAsync(ct);
-    var suffix = string.IsNullOrWhiteSpace(detail) ? string.Empty : $" Response: {detail.Trim()}";
-    throw new HttpRequestException(
-        $"Server returned {(int)response.StatusCode} {response.ReasonPhrase}.{suffix}",
-        null,
-        response.StatusCode);
-}
-
 static async Task SafeDelay(TimeSpan delay, CancellationToken ct)
 {
     try { await Task.Delay(delay, ct); }
     catch (OperationCanceledException) { }
-}
-
-static async Task<UploadResponse> UploadRelations(
-    HttpClient http,
-    LeaseResponse lease,
-    ChannelReader<RawRelationRecord> relations,
-    CancellationTokenSource leaseCts,
-    ClientLeaseProgress progress,
-    CancellationToken cancellationToken)
-{
-    try
-    {
-        var path = $"/api/dist/relations/{Uri.EscapeDataString(lease.JobId)}/{Uri.EscapeDataString(lease.LeaseId)}";
-        using var request = new HttpRequestMessage(HttpMethod.Post, path)
-        {
-            Content = new NdjsonRelationContent(relations, progress),
-        };
-        using var response = await http.SendAsync(
-            request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        await EnsureSuccess(response, cancellationToken);
-        return await response.Content.ReadFromJsonAsync<UploadResponse>(cancellationToken)
-            ?? throw new HttpRequestException("The server returned an empty relation-upload response.");
-    }
-    catch
-    {
-        leaseCts.Cancel();
-        throw;
-    }
 }
 
 static bool IsCancellationAggregate(AggregateException exception)
@@ -248,102 +188,48 @@ sealed record ClientContext(string JobId, FactorBaseDocument FactorBase, Sieving
     }
 }
 
-/// <summary>
-/// A bounded bridge between the parallel sieve and the HTTP request body. When the network is slower
-/// than the sieve, producers apply backpressure instead of allowing relation memory to grow without bound.
-/// </summary>
-sealed class StreamingRawRelationSink : IRawRelationSink
-{
-    private readonly Channel<RawRelationRecord> _channel;
-    private readonly CancellationToken _cancellationToken;
-    private readonly ClientLeaseProgress _progress;
-
-    public StreamingRawRelationSink(
-        int capacity, CancellationToken cancellationToken, ClientLeaseProgress progress)
-    {
-        _cancellationToken = cancellationToken;
-        _progress = progress;
-        _channel = Channel.CreateBounded<RawRelationRecord>(new BoundedChannelOptions(capacity)
-        {
-            FullMode = BoundedChannelFullMode.Wait,
-            SingleReader = true,
-            SingleWriter = false,
-        });
-    }
-
-    public ChannelReader<RawRelationRecord> Reader => _channel.Reader;
-
-    public void Add(RawRelationRecord relation)
-    {
-        _channel.Writer.WriteAsync(relation, _cancellationToken).AsTask().GetAwaiter().GetResult();
-        _progress.RecordProduced();
-    }
-
-    public void Flush()
-    {
-    }
-
-    public void Complete() => _channel.Writer.TryComplete();
-
-    public void Fail(Exception exception) => _channel.Writer.TryComplete(exception);
-}
-
-/// <summary>Writes one compact JSON object per line without ever computing or buffering a content length.</summary>
-sealed class NdjsonRelationContent : HttpContent
-{
-    private static readonly byte[] NewLine = "\n"u8.ToArray();
-    private readonly ChannelReader<RawRelationRecord> _relations;
-    private readonly ClientLeaseProgress _progress;
-
-    public NdjsonRelationContent(ChannelReader<RawRelationRecord> relations, ClientLeaseProgress progress)
-    {
-        _relations = relations;
-        _progress = progress;
-        Headers.ContentType = new MediaTypeHeaderValue("application/x-ndjson");
-    }
-
-    protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
-        => SerializeToStreamAsync(stream, context, CancellationToken.None);
-
-    protected override async Task SerializeToStreamAsync(
-        Stream stream, TransportContext? context, CancellationToken cancellationToken)
-    {
-        await foreach (var relation in _relations.ReadAllAsync(cancellationToken))
-        {
-            var json = JsonSerializer.SerializeToUtf8Bytes(
-                RelationUploadCodec.ToUploadRecord(relation), JsonSerializerOptions.Web);
-            await stream.WriteAsync(json, cancellationToken);
-            await stream.WriteAsync(NewLine, cancellationToken);
-            _progress.RecordStreamed();
-        }
-    }
-
-    protected override bool TryComputeLength(out long length)
-    {
-        length = 0;
-        return false;
-    }
-}
-
 /// <summary>Low-frequency client heartbeat that remains useful even when network backpressure stalls workers.</summary>
-sealed class ClientLeaseProgress : IProgress<SiqsProgressEvent>, IDisposable
+sealed class ClientLeaseProgress : IProgress<SiqsProgressEvent>, IClientTransportProgress, IDisposable
 {
     private readonly LeaseResponse _lease;
     private readonly int _queueCapacity;
+    private readonly int _chunkCapacity;
+    private readonly int _maxConcurrentUploads;
+    private readonly int _sieveParallelism;
     private readonly Stopwatch _elapsed = Stopwatch.StartNew();
     private readonly Timer _heartbeat;
     private long _polynomials;
     private long _fullRelations;
     private long _partialRelations;
     private long _usableRelations;
+    private long _activeAFamilies;
     private long _produced;
+    private long _dequeued;
     private long _streamed;
+    private long _durable;
+    private long _durableChunks;
+    private long _durableAckTimestampTicks;
+    private long _maxDurableAckTimestampTicks;
+    private long _producerBackpressureTimestampTicks;
+    private long _producerBackpressureStarted;
+    private long _producerBackpressureEpisodes;
+    private int _blockedProducers;
+    private int _uploadsInFlight;
+    private int _maxUploadsInFlight;
     private int _disposed;
 
-    public ClientLeaseProgress(LeaseResponse lease, int queueCapacity)
+    public ClientLeaseProgress(
+        LeaseResponse lease,
+        int queueCapacity,
+        int chunkCapacity,
+        int maxConcurrentUploads,
+        int sieveParallelism)
     {
         _lease = lease;
         _queueCapacity = queueCapacity;
+        _chunkCapacity = chunkCapacity;
+        _maxConcurrentUploads = maxConcurrentUploads;
+        _sieveParallelism = sieveParallelism;
         _heartbeat = new Timer(_ => WriteHeartbeat(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
     }
 
@@ -353,16 +239,75 @@ sealed class ClientLeaseProgress : IProgress<SiqsProgressEvent>, IDisposable
         SetCounter(value, "full_relations", ref _fullRelations);
         SetCounter(value, "partial_relations", ref _partialRelations);
         SetCounter(value, "usable_relations", ref _usableRelations);
+        SetCounter(value, "active_a_families", ref _activeAFamilies);
     }
 
     public void RecordProduced() => Interlocked.Increment(ref _produced);
 
+    public void RecordDequeued() => Interlocked.Increment(ref _dequeued);
+
     public void RecordStreamed() => Interlocked.Increment(ref _streamed);
+
+    public void BeginProducerWait()
+    {
+        if (Interlocked.Increment(ref _blockedProducers) == 1)
+        {
+            Interlocked.Exchange(ref _producerBackpressureStarted, Stopwatch.GetTimestamp());
+            Interlocked.Increment(ref _producerBackpressureEpisodes);
+        }
+    }
+
+    public void EndProducerWait()
+    {
+        if (Interlocked.Decrement(ref _blockedProducers) == 0)
+        {
+            var started = Interlocked.Exchange(ref _producerBackpressureStarted, 0);
+            if (started > 0)
+            {
+                Interlocked.Add(
+                    ref _producerBackpressureTimestampTicks,
+                    Stopwatch.GetTimestamp() - started);
+            }
+        }
+    }
+
+    public void RecordUploadStarted()
+    {
+        var current = Interlocked.Increment(ref _uploadsInFlight);
+        SetMaximum(ref _maxUploadsInFlight, current);
+    }
+
+    public void RecordUploadCompleted(int relationCount, long elapsedTimestampTicks, bool durable)
+    {
+        Interlocked.Decrement(ref _uploadsInFlight);
+        if (!durable)
+        {
+            return;
+        }
+
+        Interlocked.Add(ref _durable, relationCount);
+        Interlocked.Increment(ref _durableChunks);
+        Interlocked.Add(ref _durableAckTimestampTicks, elapsedTimestampTicks);
+        SetMaximum(ref _maxDurableAckTimestampTicks, elapsedTimestampTicks);
+    }
 
     public void Dispose()
     {
         Interlocked.Exchange(ref _disposed, 1);
         _heartbeat.Dispose();
+    }
+
+    public string TransportSummary()
+    {
+        var durableChunks = Volatile.Read(ref _durableChunks);
+        var averageAckMilliseconds = durableChunks == 0
+            ? 0.0
+            : TimestampTicksToMilliseconds(Volatile.Read(ref _durableAckTimestampTicks)) / durableChunks;
+        return $"transport backpressure {BackpressureSeconds():F2}s in " +
+               $"{Volatile.Read(ref _producerBackpressureEpisodes)} episodes, durable ACK " +
+               $"avg {averageAckMilliseconds:F1}ms / max " +
+               $"{TimestampTicksToMilliseconds(Volatile.Read(ref _maxDurableAckTimestampTicks)):F1}ms, " +
+               $"max {Volatile.Read(ref _maxUploadsInFlight)} uploads in flight";
     }
 
     private void WriteHeartbeat()
@@ -373,14 +318,26 @@ sealed class ClientLeaseProgress : IProgress<SiqsProgressEvent>, IDisposable
         }
 
         var produced = Volatile.Read(ref _produced);
+        var dequeued = Volatile.Read(ref _dequeued);
         var streamed = Volatile.Read(ref _streamed);
-        var queued = Math.Clamp(produced - streamed, 0, _queueCapacity);
+        var durable = Volatile.Read(ref _durable);
+        var queued = Math.Clamp(produced - dequeued, 0, _queueCapacity);
+        var staged = Math.Clamp(dequeued - streamed, 0, _chunkCapacity);
+        var awaitingAck = Math.Clamp(
+            streamed - durable,
+            0,
+            (long)_chunkCapacity * _maxConcurrentUploads);
         Console.WriteLine(
             $"Lease {_lease.LeaseId}: {_elapsed.Elapsed:hh\\:mm\\:ss}, " +
             $"{Volatile.Read(ref _polynomials)} polynomials, " +
             $"{Volatile.Read(ref _fullRelations)} full / {Volatile.Read(ref _partialRelations)} partial, " +
             $"{Volatile.Read(ref _usableRelations)} usable; " +
-            $"generated {produced}, written to HTTP {streamed}, queue {queued}/{_queueCapacity}.");
+            $"A workers {Volatile.Read(ref _activeAFamilies)}/{_sieveParallelism}; " +
+            $"generated {produced}; transport channel {queued}/{_queueCapacity}, " +
+            $"staged {staged}/{_chunkCapacity}, awaiting durable ACK {awaitingAck}, " +
+            $"uploads {Volatile.Read(ref _uploadsInFlight)}/{_maxConcurrentUploads}, " +
+            $"backpressure {BackpressureSeconds():F2}s, " +
+            $"durable {durable} ({Volatile.Read(ref _durableChunks)} chunks).");
     }
 
     private static void SetCounter(SiqsProgressEvent value, string name, ref long destination)
@@ -388,6 +345,54 @@ sealed class ClientLeaseProgress : IProgress<SiqsProgressEvent>, IDisposable
         if (value.Counters.TryGetValue(name, out var text) && long.TryParse(text, out var parsed))
         {
             Volatile.Write(ref destination, parsed);
+        }
+    }
+
+    private double BackpressureSeconds()
+    {
+        var timestampTicks = Volatile.Read(ref _producerBackpressureTimestampTicks);
+        if (Volatile.Read(ref _blockedProducers) > 0)
+        {
+            var started = Volatile.Read(ref _producerBackpressureStarted);
+            if (started > 0)
+            {
+                timestampTicks += Stopwatch.GetTimestamp() - started;
+            }
+        }
+
+        return timestampTicks / (double)Stopwatch.Frequency;
+    }
+
+    private static double TimestampTicksToMilliseconds(long timestampTicks)
+        => timestampTicks * 1_000.0 / Stopwatch.Frequency;
+
+    private static void SetMaximum(ref int target, int value)
+    {
+        var current = Volatile.Read(ref target);
+        while (value > current)
+        {
+            var observed = Interlocked.CompareExchange(ref target, value, current);
+            if (observed == current)
+            {
+                return;
+            }
+
+            current = observed;
+        }
+    }
+
+    private static void SetMaximum(ref long target, long value)
+    {
+        var current = Volatile.Read(ref target);
+        while (value > current)
+        {
+            var observed = Interlocked.CompareExchange(ref target, value, current);
+            if (observed == current)
+            {
+                return;
+            }
+
+            current = observed;
         }
     }
 }

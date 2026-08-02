@@ -19,14 +19,23 @@ public sealed class DistributedSievingPhaseExecutor : IPhaseExecutor
     private readonly OverlordJob _job;
     private readonly int _leaseChunkSize;
     private readonly TimeSpan _uploadGracePeriod;
+    private readonly long _maxRelationChunkBytes;
+    private readonly long _maxRelationSpoolBytes;
 
     public DistributedSievingPhaseExecutor(
-        IPhaseExecutor inner, OverlordJob job, int leaseChunkSize, TimeSpan uploadGracePeriod)
+        IPhaseExecutor inner,
+        OverlordJob job,
+        int leaseChunkSize,
+        TimeSpan uploadGracePeriod,
+        long maxRelationChunkBytes,
+        long maxRelationSpoolBytes)
     {
         _inner = inner;
         _job = job;
         _leaseChunkSize = leaseChunkSize;
         _uploadGracePeriod = uploadGracePeriod;
+        _maxRelationChunkBytes = maxRelationChunkBytes;
+        _maxRelationSpoolBytes = maxRelationSpoolBytes;
     }
 
     public Task<PhaseResult> RunFactorBaseAsync(PhaseContext context) => _inner.RunFactorBaseAsync(context);
@@ -53,6 +62,13 @@ public sealed class DistributedSievingPhaseExecutor : IPhaseExecutor
         var sink = new RawRelationBatchFileSink(context.JobDirectory, metadata, parameters.OutputBatchSize);
         var ingest = new RelationIngest(verifier, sink, ReadExistingRelations(context.JobDirectory));
         var ledger = new LeaseLedger(aCount, _leaseChunkSize);
+        var inbox = new DurableRelationInbox(
+            context.JobDirectory,
+            _maxRelationChunkBytes,
+            _maxRelationSpoolBytes,
+            _job.IngestDurableChunk,
+            _job.CompleteDurableLease,
+            exception => _job.Fault($"Relation inbox failed: {exception.Message}"));
 
         // Use the Overlord job id (also the run-directory name) so the descriptor, leases, and uploads
         // all share one id; the pipeline's internal job id in job.json is an implementation detail.
@@ -60,6 +76,7 @@ public sealed class DistributedSievingPhaseExecutor : IPhaseExecutor
             BuildDescriptor(_job.JobId, factorBase, parameters, aCount),
             ledger,
             ingest,
+            inbox,
             parameters.RelationTarget,
             _uploadGracePeriod);
 
@@ -70,8 +87,9 @@ public sealed class DistributedSievingPhaseExecutor : IPhaseExecutor
         }
         finally
         {
-            // Verified uploads may still sit in the sink's partial batch buffer when the wait
-            // throws (cancellation or fault); flush them so volunteer work survives on disk.
+            // Stop the worker before flushing the canonical sink so no background ingest can append
+            // after the sieving artifacts have been declared complete.
+            await inbox.SealAndDrainAsync();
             sink.Complete();
         }
 

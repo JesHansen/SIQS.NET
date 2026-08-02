@@ -34,7 +34,10 @@ internal sealed class FilteringCommandHandler
             MaxPartialsPerPrime: command.MaxPartialsPerPrime,
             LargePrimeBound: partialMetadata?.LargePrimeBound,
             LargePrime2Bound: partialMetadata?.LargePrime2Bound,
-            SpillDirectory: command.SpillDirectory);
+            SpillDirectory: command.SpillDirectory,
+            MaxCycleLength: command.MaxCycleLength,
+            EnableTwoMerge: command.EnableTwoMerge,
+            TwoMergeSlack: command.TwoMergeSlack);
         var result = FilteringEngine.Run(factorBase, fulls, partials, options, progress);
         var format = result.Relations.Relations.Any(r => r.LargePrimes.Count > 1
             || (r.LargePrimes.Count == 1 && r.LargePrime is null))
@@ -116,7 +119,7 @@ internal static class FilteringReportFormatter
         var result = command.Result;
         var c = result.Counters;
         yield return $"matrix {c.RowsBeforePruning}x{c.ColumnsBeforePruning} -> {result.Meta.RowCount}x{result.Meta.ColumnCount}, nonzero={c.NonZeroRows}, zero={c.ZeroRows}, surplus={c.NonZeroRowSurplus}/{c.TargetNonZeroSurplus}";
-        yield return $"rows-removed={c.RowsRemoved}, columns-removed={c.ColumnsRemoved}, surplus-rows-trimmed={c.SurplusRowsTrimmed}, singleton-pruned={c.SingletonPruned}, duplicates={c.DuplicatesRemoved}, duplicate-rows-dropped={command.DuplicateRowsDropped}";
+        yield return $"rows-removed={c.RowsRemoved}, columns-removed={c.ColumnsRemoved}, two-merges={c.TwoMerges}, surplus-rows-trimmed={c.SurplusRowsTrimmed}, singleton-pruned={c.SingletonPruned}, duplicates={c.DuplicatesRemoved}, duplicate-rows-dropped={command.DuplicateRowsDropped}";
         yield return $"max={c.MaxRowWeightBeforeTrim}->{c.MaxRowWeightAfterTrim}, avg-row-weight={c.AverageRowWeightBeforeTrim.ToString("F3", CultureInfo.InvariantCulture)}->{c.AverageRowWeightAfterTrim.ToString("F3", CultureInfo.InvariantCulture)}, combined-partials={c.CombinedPartials}, max-cycle={c.MaxCycleLength}";
         var counters = new Dictionary<string, string>
         {
@@ -124,6 +127,7 @@ internal static class FilteringReportFormatter
             ["raw_partials"] = c.RawPartials.ToString(),
             ["combined_partials"] = c.CombinedPartials.ToString(),
             ["rejected_cycles"] = c.RejectedCycles.ToString(),
+            ["two_merges"] = c.TwoMerges.ToString(),
             ["surplus_rows_trimmed"] = c.SurplusRowsTrimmed.ToString(),
             ["duplicates_removed"] = c.DuplicatesRemoved.ToString(),
             ["singleton_pruned"] = c.SingletonPruned.ToString(),

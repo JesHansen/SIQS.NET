@@ -14,6 +14,9 @@ internal sealed class Candidate
     private readonly CandidatePayload _resident;
     private readonly CandidateStore? _store;
     private readonly long _token;
+    private readonly Candidate? _mergedLeft;
+    private readonly Candidate? _mergedRight;
+    private readonly BigInteger _scaledN;
 
     private Candidate(CandidateParts parts, CandidatePayload resident, CandidateStore? store, long token)
     {
@@ -27,6 +30,22 @@ internal sealed class Candidate
         _token = token;
     }
 
+    private Candidate(Candidate left, Candidate right, ParityColumnSet parity, BigInteger scaledN)
+    {
+        Kind = left.Kind == RelationKind.Full && right.Kind == RelationKind.Full
+            ? RelationKind.Full
+            : RelationKind.CombinedPartial;
+        Parity = parity;
+        OrderKey = StringComparer.Ordinal.Compare(left.OrderKey, right.OrderKey) <= 0
+            ? left.OrderKey
+            : right.OrderKey;
+        CycleLength = left.CycleLength + right.CycleLength;
+        DuplicateFingerprint = default;
+        _mergedLeft = left;
+        _mergedRight = right;
+        _scaledN = scaledN;
+    }
+
     public RelationKind Kind { get; }
     public ParityColumnSet Parity { get; }
     public string OrderKey { get; }
@@ -37,12 +56,27 @@ internal sealed class Candidate
     public (ulong, ulong) DuplicateFingerprint { get; }
 
     /// <summary>Retrieves the arithmetic payload, reading it back from the store when it was spilled.</summary>
-    public CandidatePayload LoadPayload() => _store is null ? _resident : _store.Load(_token);
+    public CandidatePayload LoadPayload()
+    {
+        if (_mergedLeft is not null && _mergedRight is not null)
+        {
+            return CandidatePayloadMerger.Merge(_mergedLeft.LoadPayload(), _mergedRight.LoadPayload(), _scaledN);
+        }
+
+        return _store is null ? _resident : _store.Load(_token);
+    }
 
     public static Candidate Resident(CandidateParts parts) => new(parts, parts.Payload, store: null, token: 0);
 
     public static Candidate Spilled(CandidateParts parts, CandidateStore store, long token)
         => new(parts, default, store, token);
+
+    public static Candidate Merged(
+        Candidate left,
+        Candidate right,
+        ParityColumnSet parity,
+        BigInteger scaledN)
+        => new(left, right, parity, scaledN);
 }
 
 /// <summary>The structural half of a candidate plus its payload, as produced before the store decides

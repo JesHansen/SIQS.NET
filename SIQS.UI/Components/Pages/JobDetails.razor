@@ -73,6 +73,36 @@ else if (DistributedLive is { } distributed)
                 </table>
             </section>
         }
+        @if (distributed.Inbox is { } inbox)
+        {
+            <section class="panel">
+                <h2>Durable relation inbox</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Received chunks</th>
+                            <th>Ready</th>
+                            <th>Processed</th>
+                            <th>Failed</th>
+                            <th>Accepted</th>
+                            <th>Rejected</th>
+                            <th>Inbox bytes / quota</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>@inbox.ReceivedChunks</td>
+                            <td>@inbox.ReadyChunks</td>
+                            <td>@inbox.ProcessedChunks</td>
+                            <td>@inbox.FailedChunks</td>
+                            <td>@inbox.AcceptedRelations</td>
+                            <td>@inbox.RejectedRelations</td>
+                            <td>@inbox.DurableBytes / @inbox.MaxDurableBytes</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+        }
         <p class="muted">Filtering, linear algebra and square root run on this server after sieving completes.</p>
     }
 else if (_job is { } job)

@@ -70,6 +70,22 @@ public static class FilteringEngine
         var deduped = CandidateReducer.RemoveDuplicates(ordered, counters);
         CandidateReducer.RecordPrePruningTelemetry(deduped, factorBaseCount, counters);
         var survivors = CandidateReducer.PruneSingletons(deduped, factorBaseCount, counters);
+        if (options.EnableTwoMerge)
+        {
+            while (true)
+            {
+                var mergesBefore = counters.TwoMerges;
+                survivors = CandidateReducer.MergeWeightTwoColumns(
+                    survivors, factorBaseCount, meta.ScaledN, options.TwoMergeSlack, counters);
+                if (counters.TwoMerges == mergesBefore)
+                {
+                    break;
+                }
+
+                survivors = CandidateReducer.PruneSingletons(survivors, factorBaseCount, counters);
+            }
+        }
+
         CandidateReducer.RecordRowWeightTelemetry(survivors, beforeTrim: true, counters);
 
         while (true)

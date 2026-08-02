@@ -6,7 +6,7 @@ namespace Filtering;
 /// <summary>
 /// Combines single- and double-large-prime partials into full-equivalent candidates by finding
 /// cycles in the large-prime graph. Pass 1 streams every partial, keeping only the union-find/forest
-/// skeleton; pass 2 re-reads just the records that participate in a cycle.
+/// skeleton; pass 2 re-reads just the records that participate in an accepted cycle.
 /// </summary>
 internal static class PartialCycleCombiner
 {
@@ -14,6 +14,11 @@ internal static class PartialCycleCombiner
         IRawRelationSource partials, BigInteger scaledN, long bound, int factorBaseCount,
         FilteringOptions options, FilteringCounters counters, CandidateStore store)
     {
+        if (options.MaxCycleLength is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "Maximum cycle length must be positive or null.");
+        }
+
         // Pass 1: stream every partial once, retaining only the graph skeleton. Vertices are the
         // large primes as ulong ((q, 0) for 1LP, matching the sieving-side cycle tracker), forest
         // edges carry a record locator, and the duplicate set holds 128-bit fingerprints of the
@@ -66,6 +71,12 @@ internal static class PartialCycleCombiner
             {
                 var path = FindForestPath(forestParent, u, v);
                 path.Add(locator);
+                if (options.MaxCycleLength is { } cap && path.Count > cap)
+                {
+                    counters.RejectedCycles++;
+                    continue;
+                }
+
                 counters.MaxCycleLength = Math.Max(counters.MaxCycleLength, path.Count);
                 counters.TotalCycleLength += path.Count;
                 counters.CombinedPartials++;

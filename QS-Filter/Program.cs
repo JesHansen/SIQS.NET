@@ -2,7 +2,7 @@ using Filtering;
 using QS_Filter;
 using SIQS.Contracts;
 
-const string Usage = "usage: qs-filter --factor-base factor_base.txt --relations relations_*.txt --partials partials_*.txt --out-dir . [--max-partials-per-prime N]";
+const string Usage = "usage: qs-filter --factor-base factor_base.txt --relations relations_*.txt --partials partials_*.txt --out-dir . [--max-partials-per-prime N] [--max-cycle-length N] [--enable-two-merge true|false] [--two-merge-slack N]";
 
 try
 {

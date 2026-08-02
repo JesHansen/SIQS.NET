@@ -11,7 +11,7 @@ namespace SIQS.Contracts.Distributed;
 public static class DistProtocol
 {
     /// <summary>Bump on any change to the wire DTOs or the relation/parameter encoding.</summary>
-    public const int Version = 2;
+    public const int Version = 3;
 
     /// <summary>
     /// A stable digest of every job input that must be identical on both sides for the sieve to
@@ -98,5 +98,25 @@ public sealed record RelationUploadRecord(
     IReadOnlyList<int> ParityColumns,
     IReadOnlyList<string> LargePrimes);
 
-/// <summary>Server → client upload result after verification and dedup.</summary>
-public sealed record UploadResponse(bool Accepted, int AcceptedCount, int RejectedCount, string? Reason);
+/// <summary>
+/// Server → client acknowledgement that one relation chunk has reached the durable inbox. This does
+/// not imply that its relations have been parsed or verified yet.
+/// </summary>
+public sealed record RelationChunkResponse(
+    bool Accepted,
+    long Sequence,
+    long DurableBytes,
+    bool Duplicate,
+    string? Reason);
+
+/// <summary>
+/// Client → server marker that all chunks for a lease have been durably uploaded. Chunk sequences
+/// are zero-based and contiguous, so <see cref="ChunkCount"/> is also the first absent sequence.
+/// </summary>
+public sealed record LeaseUploadCompleteRequest(long ChunkCount);
+
+/// <summary>
+/// Server → client acknowledgement that the durable end-of-lease marker was recorded. Verification
+/// and lease crediting continue asynchronously.
+/// </summary>
+public sealed record LeaseUploadCompleteResponse(bool Accepted, string? Reason);

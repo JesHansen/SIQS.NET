@@ -401,6 +401,87 @@ public class SievingEngineTests
     }
 
     [Fact]
+    public void Batch_file_sink_flushes_durably_without_fragmenting_active_batch()
+    {
+        var dir = Directory.CreateTempSubdirectory("siqs-sink-tests-").FullName;
+        try
+        {
+            var metadata = new RawRelationsMetadata(77, 1, 77, 2, 128);
+            var sink = new RawRelationBatchFileSink(dir, metadata, batchSize: 3);
+
+            sink.Add(FullRelation("R000000"));
+            sink.Flush();
+
+            var firstPath = Path.Combine(dir, "relations_0000.txt");
+            Assert.Single(RawRelationsFile.Parse(File.ReadAllText(firstPath)).Relations);
+
+            sink.Add(FullRelation("R000001"));
+            sink.Flush();
+            sink.Add(FullRelation("R000002"));
+            sink.Flush();
+            sink.Add(FullRelation("R000003"));
+            sink.Complete();
+
+            var batches = Directory.GetFiles(dir, "relations_*.txt")
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+            Assert.Equal(2, batches.Length);
+            Assert.Equal(
+                new[] { "R000000", "R000001", "R000002" },
+                RawRelationsFile.Parse(File.ReadAllText(batches[0])).Relations.Select(r => r.RelationId));
+            Assert.Equal(
+                new[] { "R000003" },
+                RawRelationsFile.Parse(File.ReadAllText(batches[1])).Relations.Select(r => r.RelationId));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Batch_file_sink_resumes_both_streams_after_five_digit_batches()
+    {
+        var dir = Directory.CreateTempSubdirectory("siqs-sink-tests-").FullName;
+        try
+        {
+            var metadata = new RawRelationsMetadata(77, 1, 77, 2, 128);
+            File.WriteAllText(
+                Path.Combine(dir, "relations_10000.txt"),
+                RawRelationsFile.Write(new RawRelationsDocument(
+                    FileFormats.RawRelationsV1, metadata, Array.Empty<RawRelationRecord>())));
+            File.WriteAllText(
+                Path.Combine(dir, "partials_10000.txt"),
+                RawRelationsFile.Write(new RawRelationsDocument(
+                    FileFormats.RawPartialsV1, metadata, Array.Empty<RawRelationRecord>())));
+            var sink = new RawRelationBatchFileSink(dir, metadata, batchSize: 1);
+
+            sink.Add(new RawRelationRecord(
+                "R-full", RelationKind.Full, "P000000",
+                A: 1, B: 0, C: -77, X: 1, T: 1, Sign: 1,
+                FactorExponents: new Dictionary<int, int>(),
+                ParityColumns: Array.Empty<int>(),
+                LargePrime: null));
+            sink.Add(new RawRelationRecord(
+                "R-partial", RelationKind.Partial, "P000000",
+                A: 1, B: 0, C: -77, X: 1, T: 1, Sign: 1,
+                FactorExponents: new Dictionary<int, int>(),
+                ParityColumns: Array.Empty<int>(),
+                LargePrime: 101));
+            sink.Complete();
+
+            Assert.True(File.Exists(Path.Combine(dir, "relations_10001.txt")));
+            Assert.True(File.Exists(Path.Combine(dir, "partials_10001.txt")));
+            Assert.Contains("relations_10000.txt", sink.Artifacts);
+            Assert.Contains("partials_10000.txt", sink.Artifacts);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Explicit_block_size_does_not_change_single_thread_relation_output()
     {
         var fb = FactorBase("1022117", 1000, 1);
@@ -412,6 +493,14 @@ public class SievingEngineTests
 
         Assert.Equal(AllRelationSignatures(first), AllRelationSignatures(second));
     }
+
+    private static RawRelationRecord FullRelation(string relationId)
+        => new(
+            relationId, RelationKind.Full, "P000000",
+            A: 1, B: 0, C: -77, X: 1, T: 1, Sign: 1,
+            FactorExponents: new Dictionary<int, int>(),
+            ParityColumns: Array.Empty<int>(),
+            LargePrime: null);
 
     [Fact]
     public void Bucket_large_prime_cutoff_does_not_change_single_thread_relation_output()

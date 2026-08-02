@@ -50,9 +50,9 @@ internal sealed class RelationIngest
     }
 
     /// <summary>
-    /// Ingests one transport batch. Transport batches are deliberately not durability boundaries:
-    /// <see cref="RawRelationBatchFileSink"/> owns disk batching and flushes at its configured size,
-    /// while the distributed sieve completes the sink before filtering begins.
+    /// Ingests one transport batch. Before returning, accepted relations cross the canonical sink's
+    /// physical durability boundary so the inbox can safely replace its raw write-ahead payload with
+    /// a compact receipt.
     /// </summary>
     public (int Accepted, int Rejected) Ingest(IEnumerable<RawRelationRecord> relations)
     {
@@ -72,6 +72,11 @@ internal sealed class RelationIngest
                 _sink.Add(record);
                 accepted++;
             }
+
+            // Once this method returns, the inbox may compact its raw write-ahead chunk. Make every
+            // accepted record crash-durable first; replay remains safe if a crash occurs before the
+            // inbox publishes its compact receipt because existing canonical records are deduplicated.
+            _sink.FlushDurable();
         }
 
         return (accepted, rejected);

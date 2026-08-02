@@ -17,12 +17,15 @@ builder.Services.AddRazorComponents()
 
 // SIQS application services.
 var runsRoot = Path.Combine(builder.Environment.ContentRootPath, "runs");
+var overlordOptions = builder.Configuration
+    .GetSection("Overlord")
+    .Get<OverlordOptions>() ?? new OverlordOptions();
 builder.Services.AddSingleton<ISiqsPipeline>(_ => new SiqsPipeline());
 builder.Services.AddSingleton(new RunsDirectory(runsRoot));
 builder.Services.AddSingleton<FactorizationJobService>();
 builder.Services.AddSingleton<RunParameterValidator>();
 builder.Services.AddSingleton<ArtifactBrowser>();
-builder.Services.AddSingleton(new OverlordService(runsRoot));
+builder.Services.AddSingleton(new OverlordService(runsRoot, overlordOptions));
 builder.Services.AddSingleton<JobCatalog>();
 
 var app = builder.Build();

@@ -20,7 +20,7 @@ internal sealed record DistSubmitRequest(
 
 /// <summary>
 /// The REST surface volunteer clients talk to: a version handshake, a job descriptor poll, work
-/// leasing, and verified relation upload. Each endpoint is a thin adapter over <see cref="OverlordService"/>.
+/// leasing, and durable relation upload. Each endpoint is a thin adapter over <see cref="OverlordService"/>.
 /// </summary>
 internal static class DistributedEndpoints
 {
@@ -34,17 +34,28 @@ internal static class DistributedEndpoints
         group.MapGet("/job", (OverlordService overlord)
             => overlord.TryGetJob() is { } descriptor ? Results.Ok(descriptor) : Results.NoContent());
 
-        group.MapPost("/lease", (OverlordService overlord)
-            => overlord.TryLease() is { } lease ? Results.Ok(lease) : Results.NoContent());
+        group.MapPost("/lease", (int? parallelism, OverlordService overlord)
+            => overlord.TryLease(parallelism) is { } lease ? Results.Ok(lease) : Results.NoContent());
 
-        group.MapPost("/relations/{jobId}/{leaseId}", async (
+        group.MapPost("/relations/{jobId}/{leaseId}/{sequence:long}", async (
                 string jobId,
                 string leaseId,
+                long sequence,
                 HttpRequest request,
                 OverlordService overlord,
                 CancellationToken cancellationToken)
-            => Results.Ok(await overlord.UploadAsync(jobId, leaseId, request.Body, cancellationToken)))
+            => Results.Ok(await overlord.UploadChunkAsync(
+                jobId, leaseId, sequence, request.Body, cancellationToken)))
             .WithMetadata(new DisableRequestSizeLimitAttribute());
+
+        group.MapPost("/relations/{jobId}/{leaseId}/complete", async (
+                string jobId,
+                string leaseId,
+                LeaseUploadCompleteRequest request,
+                OverlordService overlord,
+                CancellationToken cancellationToken)
+            => Results.Ok(await overlord.CompleteLeaseUploadAsync(
+                jobId, leaseId, request.ChunkCount, cancellationToken)));
 
         group.MapGet("/status", (OverlordService overlord)
             => overlord.Snapshot() is { } snapshot ? Results.Ok(snapshot) : Results.NoContent());

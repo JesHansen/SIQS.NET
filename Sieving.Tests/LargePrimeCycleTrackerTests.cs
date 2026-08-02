@@ -174,7 +174,12 @@ public class LargePrimeCycleTrackerTests
             }
         }
 
-        var filtering = FilteringEngine.Run(FactorBase(8), fulls, partials);
+        // Compare the tracker's raw cycle accounting before downstream matrix-side two-merges.
+        var filtering = FilteringEngine.Run(
+            FactorBase(8),
+            fulls,
+            partials,
+            new FilteringOptions(EnableTwoMerge: false));
         var filteringUsableCycles = filtering.Relations.Relations.Count(r =>
             r.Kind == RelationKind.CombinedPartial && r.ParityColumns.Count > 0);
 

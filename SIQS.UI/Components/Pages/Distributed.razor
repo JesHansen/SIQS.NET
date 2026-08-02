@@ -113,6 +113,34 @@
                                 </table>
                             }
 
+                            @if (job.Inbox is { } inbox)
+                            {
+                                <table class="phases">
+                                    <thead>
+                                        <tr>
+                                            <th>Durable chunks</th>
+                                            <th>Ready for ingest</th>
+                                            <th>Processed</th>
+                                            <th>Failed</th>
+                                            <th>Accepted relations</th>
+                                            <th>Rejected relations</th>
+                                            <th>Inbox bytes / quota</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td>@inbox.ReceivedChunks</td>
+                                            <td>@inbox.ReadyChunks</td>
+                                            <td>@inbox.ProcessedChunks</td>
+                                            <td>@inbox.FailedChunks</td>
+                                            <td>@inbox.AcceptedRelations</td>
+                                            <td>@inbox.RejectedRelations</td>
+                                            <td>@inbox.DurableBytes / @inbox.MaxDurableBytes</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            }
+
                             @if (!string.IsNullOrEmpty(job.Error))
                             {
                                 <div class="result none"><strong>Failed:</strong> @job.Error</div>
