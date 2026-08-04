@@ -16,7 +16,7 @@ public static class BlockLanczos
 
     private const ulong AllBits = ulong.MaxValue;
     private const long ProgressIntervalMilliseconds = 10_000;
-    private const int ParallelVectorDotThreshold = 8192;
+    private const int ParallelVectorThreshold = 8192;
 
     public static SolveResult Solve(
         IReadOnlyList<RelationRow> rows,
@@ -197,7 +197,7 @@ public static class BlockLanczos
         var vtAv = new[] { new ulong[64], new ulong[64] };
         var vtA2v = new[] { new ulong[64], new ulong[64] };
         var selected = new[] { new int[64], new int[64] };
-        var vectorDotWorkspace = new VectorDotWorkspace(n, matrix.EffectiveParallelism);
+        var vectorWorkspace = new VectorWorkspace(n, matrix.EffectiveParallelism);
         var dim1 = 64;
         var mask1 = AllBits;
 
@@ -216,10 +216,9 @@ public static class BlockLanczos
         var run = retry + 1;
         for (var iter = 1; iter <= Math.Max(32, n + 128); iter++)
         {
-            Array.Clear(vnext);
             matrix.MultiplySymmetric(v[0], vnext, multiplyScratch);
-            vtAv[0] = TransposeMultiply(v[0], vnext, vectorDotWorkspace);
-            vtA2v[0] = TransposeMultiply(vnext, vnext, vectorDotWorkspace);
+            vtAv[0] = TransposeMultiply(v[0], vnext, vectorWorkspace);
+            vtA2v[0] = TransposeMultiply(vnext, vnext, vectorWorkspace);
 
             if (Gf2Matrix64.IsZero(vtAv[0]))
             {
@@ -265,7 +264,7 @@ public static class BlockLanczos
             // v[0]^T * v0, computed exactly every iteration (as msieve does). A d/e/f recurrence is
             // equivalent while the block chain stays B-orthogonal, but the explicit product costs
             // only O(n) per iteration and stays correct independent of that invariant.
-            var vtV0 = TransposeMultiply(v[0], v0, vectorDotWorkspace);
+            var vtV0 = TransposeMultiply(v[0], v0, vectorWorkspace);
 
             var d = new ulong[64];
             for (var i = 0; i < 64; i++)
@@ -279,19 +278,16 @@ public static class BlockLanczos
                 d[i] ^= 1UL << i;
             }
 
-            Gf2Matrix64.ApplyToBlockVector(v[0], d, vnext);
-
             var e = Gf2Matrix64.Multiply(winv[1], vtAv[0]);
             for (var i = 0; i < 64; i++)
             {
                 e[i] &= mask0;
             }
 
-            Gf2Matrix64.ApplyToBlockVector(v[1], e, vnext);
-
+            ulong[]? f = null;
             if (mask1 != AllBits)
             {
-                var f = Gf2Matrix64.Multiply(vtAv[1], winv[1]);
+                f = Gf2Matrix64.Multiply(vtAv[1], winv[1]);
                 for (var i = 0; i < 64; i++)
                 {
                     f[i] ^= 1UL << i;
@@ -305,11 +301,16 @@ public static class BlockLanczos
                 }
 
                 f = Gf2Matrix64.Multiply(f, f2);
-                Gf2Matrix64.ApplyToBlockVector(v[2], f, vnext);
             }
 
             var update = Gf2Matrix64.Multiply(winv[0], vtV0);
-            Gf2Matrix64.ApplyToBlockVector(v[0], update, x);
+            vectorWorkspace.ApplyRecurrenceUpdates(
+                v[0], d,
+                v[1], e,
+                f is null ? null : v[2], f,
+                update,
+                vnext,
+                x);
 
             vnext = Rotate(v, vnext);
             Rotate(winv);
@@ -368,9 +369,9 @@ public static class BlockLanczos
         return mask;
     }
 
-    private static ulong[] TransposeMultiply(ulong[] left, ulong[] right, VectorDotWorkspace workspace)
+    private static ulong[] TransposeMultiply(ulong[] left, ulong[] right, VectorWorkspace workspace)
     {
-        if (!workspace.UseParallel || left.Length < ParallelVectorDotThreshold)
+        if (!workspace.UseParallel || left.Length < ParallelVectorThreshold)
         {
             return Gf2Matrix64.TransposeMultiply(left, right);
         }
@@ -404,11 +405,12 @@ public static class BlockLanczos
         return result;
     }
 
-    private sealed class VectorDotWorkspace
+    internal sealed class VectorWorkspace
     {
-        public VectorDotWorkspace(int length, int requestedParallelism)
+        internal VectorWorkspace(int length, int requestedParallelism)
         {
-            var partitionCount = length < ParallelVectorDotThreshold
+            Length = length;
+            var partitionCount = length < ParallelVectorThreshold
                 ? 1
                 : Math.Min(Math.Max(1, requestedParallelism), length);
             Partitions = PartitionRanges.Even(length, partitionCount);
@@ -421,6 +423,8 @@ public static class BlockLanczos
             ParallelOptions = new ParallelOptions { MaxDegreeOfParallelism = Partitions.Length };
         }
 
+        internal int Length { get; }
+
         public PartitionRange[] Partitions { get; }
 
         public ulong[][] Partials { get; }
@@ -428,6 +432,72 @@ public static class BlockLanczos
         public ParallelOptions ParallelOptions { get; }
 
         public bool UseParallel => Partitions.Length > 1;
+
+        internal void ApplyRecurrenceUpdates(
+            ulong[] v0,
+            ulong[] d,
+            ulong[] v1,
+            ulong[] e,
+            ulong[]? v2,
+            ulong[]? f,
+            ulong[] update,
+            ulong[] vnext,
+            ulong[] x)
+        {
+            ValidateLength(v0, nameof(v0));
+            ValidateLength(v1, nameof(v1));
+            ValidateLength(vnext, nameof(vnext));
+            ValidateLength(x, nameof(x));
+            if ((v2 is null) != (f is null))
+            {
+                throw new ArgumentException("The optional recurrence vector and matrix must be supplied together.");
+            }
+
+            if (v2 is not null)
+            {
+                ValidateLength(v2, nameof(v2));
+            }
+
+            if (!UseParallel)
+            {
+                Gf2Matrix64.ApplyToBlockVector(v0, d, vnext);
+                Gf2Matrix64.ApplyToBlockVector(v1, e, vnext);
+                if (v2 is not null && f is not null)
+                {
+                    Gf2Matrix64.ApplyToBlockVector(v2, f, vnext);
+                }
+
+                Gf2Matrix64.ApplyToBlockVector(v0, update, x);
+                return;
+            }
+
+            Parallel.For(0, Partitions.Length, ParallelOptions, partitionIndex =>
+            {
+                var range = Partitions[partitionIndex];
+                var length = range.End - range.Start;
+                var vnextRange = vnext.AsSpan(range.Start, length);
+                Gf2Matrix64.ApplyToBlockVector(v0.AsSpan(range.Start, length), d, vnextRange);
+                Gf2Matrix64.ApplyToBlockVector(v1.AsSpan(range.Start, length), e, vnextRange);
+                if (v2 is not null && f is not null)
+                {
+                    Gf2Matrix64.ApplyToBlockVector(v2.AsSpan(range.Start, length), f, vnextRange);
+                }
+
+                Gf2Matrix64.ApplyToBlockVector(
+                    v0.AsSpan(range.Start, length),
+                    update,
+                    x.AsSpan(range.Start, length));
+            });
+        }
+
+        private void ValidateLength(ulong[] vector, string parameterName)
+        {
+            if (vector.Length != Length)
+            {
+                throw new ArgumentException(
+                    "Vector length must match the workspace length.", parameterName);
+            }
+        }
     }
 
     private static ulong[] Rotate(ulong[][] values, ulong[] next)
@@ -436,7 +506,6 @@ public static class BlockLanczos
         values[2] = values[1];
         values[1] = values[0];
         values[0] = next;
-        Array.Clear(old);
         return old;
     }
 

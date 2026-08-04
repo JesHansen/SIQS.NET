@@ -83,13 +83,13 @@ public sealed class DistributedSievingPhaseExecutor : IPhaseExecutor
         SieveOutcome outcome;
         try
         {
-            outcome = await _job.WaitForSieveCompletionAsync(context.CancellationToken);
+            outcome = await _job.WaitForSieveCompletionAsync(context.CancellationToken).ConfigureAwait(false);
         }
         finally
         {
             // Stop the worker before flushing the canonical sink so no background ingest can append
             // after the sieving artifacts have been declared complete.
-            await inbox.SealAndDrainAsync();
+            await inbox.SealAndDrainAsync().ConfigureAwait(false);
             sink.Complete();
         }
 
@@ -101,7 +101,7 @@ public sealed class DistributedSievingPhaseExecutor : IPhaseExecutor
 
         var counters = new Dictionary<string, string>
         {
-            ["usable_relations"] = ingest.UsableCount.ToString(),
+            [CounterKeys.UsableRelations] = ingest.UsableCount.ToString(),
             ["relations_needed"] = parameters.RelationTarget.ToString(),
             ["a_candidates"] = aCount.ToString(),
         };

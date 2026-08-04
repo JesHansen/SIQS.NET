@@ -46,6 +46,7 @@ internal static class JobResultFactory
             [RunParameterKeys.SieveBlockSize] = s.BlockSize?.ToString(CultureInfo.InvariantCulture) ?? "auto",
             [RunParameterKeys.BucketLargePrimeCutoff] = s.BucketLargePrimeCutoff?.ToString(CultureInfo.InvariantCulture) ?? "off",
             [RunParameterKeys.ResieveLargePrimeCutoff] = s.ResieveLargePrimeCutoff?.ToString(CultureInfo.InvariantCulture) ?? "auto",
+            [RunParameterKeys.SmallPrimeVariationBound] = "auto",
             [RunParameterKeys.TrialSievePercent] = request.TrialSievePercent?.ToString("G", CultureInfo.InvariantCulture) ?? "off",
             [RunParameterKeys.LinearAlgebraMaxDependencies] = la.MaxDependencies?.ToString(CultureInfo.InvariantCulture) ?? "auto",
             [RunParameterKeys.LinearAlgebraParallelism] = la.Parallelism?.ToString(CultureInfo.InvariantCulture) ?? "auto",

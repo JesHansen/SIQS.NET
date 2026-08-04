@@ -31,7 +31,7 @@ internal sealed class RelationIngest
             {
                 if (Remember(record))
                 {
-                    _tally.Count(record, includeInTotals: true);
+                    _tally.Count(record, isResumedReplay: true);
                 }
             }
         }
@@ -68,7 +68,7 @@ internal sealed class RelationIngest
                     continue;
                 }
 
-                _tally.Count(record, includeInTotals: false);
+                _tally.Count(record, isResumedReplay: false);
                 _sink.Add(record);
                 accepted++;
             }

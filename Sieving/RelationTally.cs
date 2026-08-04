@@ -76,12 +76,12 @@ internal sealed class RelationTally
         }
     }
 
-    public void Count(RawRelationRecord record, bool includeInTotals)
+    public void Count(RawRelationRecord record, bool isResumedReplay)
     {
         if (record.Kind != RelationKind.Partial)
         {
             Interlocked.Increment(ref _sharedFullCount);
-            if (includeInTotals)
+            if (isResumedReplay)
             {
                 _resumedFulls++;
             }
@@ -99,7 +99,7 @@ internal sealed class RelationTally
         }
 
         Interlocked.Increment(ref _sharedPartialCount);
-        if (includeInTotals)
+        if (isResumedReplay)
         {
             _resumedPartials++;
             if (record.LargePrimes.Count == 1)

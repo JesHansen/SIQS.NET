@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Collections.ObjectModel;
 using SIQS.Contracts;
 using SIQS.Pipeline;
@@ -69,10 +68,11 @@ public static class JobProgressReducer
             }
         }
 
-        var elapsed = progress.Counters.TryGetValue("elapsed_seconds", out var text)
-            && double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
-            ? parsed
-            : phases[index].ElapsedSeconds;
+        var elapsed = phases[index].ElapsedSeconds;
+        if (progress.Counters.ContainsKey(CounterKeys.ElapsedSeconds))
+        {
+            elapsed = CounterFormat.ReadSeconds(progress.Counters, CounterKeys.ElapsedSeconds, elapsed ?? 0.0);
+        }
         phases[index] = phases[index] with
         {
             Status = progress.Message == "phase completed" ? PhaseStatus.Completed : PhaseStatus.Running,

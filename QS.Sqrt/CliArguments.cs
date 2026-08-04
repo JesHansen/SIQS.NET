@@ -1,3 +1,5 @@
+using SIQS.Contracts.Cli;
+
 namespace QsSqrt;
 
 /// <summary>
@@ -12,34 +14,12 @@ internal sealed record SquareRootCommand(
 {
     public static SquareRootCommand Parse(string[] args)
     {
-        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        for (var i = 0; i < args.Length; i++)
-        {
-            var arg = args[i];
-            if (!arg.StartsWith("--", StringComparison.Ordinal))
-            {
-                throw new FormatException($"Unexpected argument '{arg}'. Options use --key value form.");
-            }
-
-            var key = arg[2..];
-            if (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal))
-            {
-                values[key] = args[++i];
-            }
-            else
-            {
-                values[key] = "true"; // valueless flag
-            }
-        }
-
+        var cli = CommandLine.Parse(args, CommandLineSyntax.FlagAware());
         return new SquareRootCommand(
-            GetOptional(values, "factor-base") ?? "factor_base.txt",
-            GetOptional(values, "relations") ?? "relations_filtered.txt",
-            GetOptional(values, "dependencies") ?? "dependencies.txt",
-            GetOptional(values, "out") ?? "factors.txt",
-            values.ContainsKey("continue-after-factor"));
+            cli.GetOptional("factor-base") ?? "factor_base.txt",
+            cli.GetOptional("relations") ?? "relations_filtered.txt",
+            cli.GetOptional("dependencies") ?? "dependencies.txt",
+            cli.GetOptional("out") ?? "factors.txt",
+            cli.GetFlag("continue-after-factor"));
     }
-
-    private static string? GetOptional(IReadOnlyDictionary<string, string> values, string key)
-        => values.TryGetValue(key, out var value) ? value : null;
 }

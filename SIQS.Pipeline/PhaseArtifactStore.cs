@@ -11,11 +11,6 @@ using SquareRoot;
 namespace SIQS.Pipeline;
 
 /// <summary>
-/// Invokes the phase libraries in-process, reading each phase's inputs from and writing its
-/// outputs to the job workspace. This is the production <see cref="IPhaseExecutor"/>; tests use
-/// fakes to exercise orchestration without running SIQS work.
-/// </summary>
-/// <summary>
 /// Shared, path-safe artifact operations used by the focused phase runners.
 /// </summary>
 internal static class PhaseArtifactStore
@@ -245,7 +240,7 @@ internal static class PhaseArtifactStore
                     ["iteration"] = value.Iteration.ToString(CultureInfo.InvariantCulture),
                     ["dimensions_solved"] = value.DimensionsSolved.ToString(CultureInfo.InvariantCulture),
                     ["target_dimensions"] = value.TargetDimensions.ToString(CultureInfo.InvariantCulture),
-                    ["elapsed_seconds"] = value.Elapsed.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture),
+                    [CounterKeys.ElapsedSeconds] = CounterFormat.Seconds(value.Elapsed.TotalSeconds),
                 },
                 ArtifactPath: null));
         }

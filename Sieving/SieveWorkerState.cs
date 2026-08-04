@@ -18,13 +18,16 @@ internal sealed class SieveRootState
     public int[] Root1Res => _root1Res;
     public int[] Root2Res => _root2Res;
 
-    /// <summary>Grows all four arrays to at least <paramref name="factorBaseCount"/> entries, reusing them otherwise.</summary>
-    public void EnsureCapacity(int factorBaseCount)
+    /// <summary>
+    /// Grows root residues for the full factor base and direct positions only through
+    /// <paramref name="positionCount"/>, reusing existing arrays otherwise.
+    /// </summary>
+    public void EnsureCapacity(int factorBaseCount, int positionCount)
     {
-        if (_pos1.Length < factorBaseCount)
+        if (_pos1.Length < positionCount)
         {
-            _pos1 = new int[factorBaseCount];
-            _pos2 = new int[factorBaseCount];
+            _pos1 = new int[positionCount];
+            _pos2 = new int[positionCount];
         }
 
         if (_root1Res.Length < factorBaseCount)
@@ -43,6 +46,9 @@ internal sealed class CandidateHitWorkspace
 {
     private List<int>[] _candidatePrimeHits = [];
     private int[] _candidateOffsets = [];
+    private int[] _offsetToCandidate = [];
+    private int[] _touchedOffsets = [];
+    private int _touchedCount;
 
     public List<int>[] PrepareCandidatePrimeHits(int candidateCount)
     {
@@ -73,6 +79,28 @@ internal sealed class CandidateHitWorkspace
 
         return _candidateOffsets.AsSpan(0, candidates.Count);
     }
+
+    public ReadOnlySpan<int> PrepareOffsetToCandidateMap(List<BlockCandidate> candidates, int blockSize)
+    {
+        if (_offsetToCandidate.Length < blockSize)
+        {
+            _offsetToCandidate = new int[blockSize];
+            Array.Fill(_offsetToCandidate, -1);
+            _touchedCount = 0;
+        }
+
+        for (var i = 0; i < _touchedCount; i++) _offsetToCandidate[_touchedOffsets[i]] = -1;
+        if (_touchedOffsets.Length < candidates.Count) Array.Resize(ref _touchedOffsets, candidates.Count);
+        for (var i = 0; i < candidates.Count; i++)
+        {
+            var offset = candidates[i].Offset;
+            _offsetToCandidate[offset] = i;
+            _touchedOffsets[i] = offset;
+        }
+
+        _touchedCount = candidates.Count;
+        return _offsetToCandidate.AsSpan(0, blockSize);
+    }
 }
 
 /// <summary>
@@ -85,6 +113,7 @@ internal sealed class LargePrimeBucketWorkspace
     private LargePrimeBuckets? _largePrimeBuckets;
     private int _capacityStart = -1;
     private int _capacityBlockSize;
+    private int _capacityPermille;
     private int _capacity;
 
     public LargePrimeBuckets Ensure(int bucketCount, int bucketCapacity, int blockSize)
@@ -100,9 +129,11 @@ internal sealed class LargePrimeBucketWorkspace
         return _largePrimeBuckets;
     }
 
-    public int EstimateCapacity(FactorBaseData fb, int bucketStart, int blockSize)
+    public int EstimateCapacity(
+        FactorBaseData fb, int bucketStart, int blockSize, int capacityPermille)
     {
-        if (_capacityStart == bucketStart && _capacityBlockSize == blockSize)
+        if (_capacityStart == bucketStart && _capacityBlockSize == blockSize
+            && _capacityPermille == capacityPermille)
         {
             return _capacity;
         }
@@ -113,9 +144,10 @@ internal sealed class LargePrimeBucketWorkspace
             expectedHits += 2.0 * blockSize / fb.Primes[i];
         }
 
-        var capacity = (int)Math.Ceiling(expectedHits * 2.0);
+        var capacity = (int)Math.Ceiling(expectedHits * capacityPermille / 1_000.0);
         _capacityStart = bucketStart;
         _capacityBlockSize = blockSize;
+        _capacityPermille = capacityPermille;
         _capacity = Math.Max(4096, capacity);
         return _capacity;
     }

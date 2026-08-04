@@ -1,4 +1,4 @@
-using System.Globalization;
+using SIQS.Contracts;
 
 namespace SIQS.Pipeline;
 
@@ -14,11 +14,8 @@ internal sealed class TopUpCoordinator
             return null;
         }
 
-        var sieving = state.PhaseStates[PhaseSequence.IndexOf(SIQS.Contracts.SiqsPhase.Sieving)];
-        var usable = sieving.Counters.TryGetValue("usable_relations", out var value)
-            && long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
-            ? parsed
-            : 0;
+        var sieving = state.PhaseStates[PhaseSequence.IndexOf(SiqsPhase.Sieving)];
+        var usable = CounterFormat.ReadLong(sieving.Counters, CounterKeys.UsableRelations);
         var margin = Math.Max(2_000, (int)Math.Ceiling(failure.Deficit * 0.25));
         var target = Math.Max(request.Sieving.RelationTarget ?? 0L, usable + failure.Deficit + margin);
         if (target > int.MaxValue)

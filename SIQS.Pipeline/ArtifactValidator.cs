@@ -55,7 +55,7 @@ internal static class ArtifactValidator
         switch (phase)
         {
             case SiqsPhase.FactorBase when result?.Factor is not null ||
-                result?.Counters.TryGetValue("input_is_prime", out var inputIsPrime) == true && inputIsPrime == "true":
+                (result is not null && CounterFormat.ReadBool(result.Counters, CounterKeys.InputIsPrime)):
                 builder.ErrorIf(!Exists("factors.txt"), "missing_artifact", "factors.txt was not produced.");
                 if (Exists("factors.txt"))
                 {

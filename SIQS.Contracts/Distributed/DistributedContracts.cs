@@ -11,7 +11,7 @@ namespace SIQS.Contracts.Distributed;
 public static class DistProtocol
 {
     /// <summary>Bump on any change to the wire DTOs or the relation/parameter encoding.</summary>
-    public const int Version = 3;
+    public const int Version = 4;
 
     /// <summary>
     /// A stable digest of every job input that must be identical on both sides for the sieve to
@@ -26,7 +26,8 @@ public static class DistProtocol
             protocolVersion, n, factorBaseBound, multiplier, allowTinyTrialDivision,
             s.SieveHalfInterval, s.PolynomialCount, s.RelationTarget, s.LargePrimeBound, s.ErrorMargin,
             s.OutputBatchSize, s.APrimeCount, s.APrimeWindowSize, s.SieveBlockSize, s.BucketLargePrimeCutoff,
-            s.ResieveLargePrimeCutoff, s.TrialRawRelationTarget?.ToString() ?? "", s.EnableTwoLargePrimes,
+            s.ResieveLargePrimeCutoff, s.SmallPrimeVariationBound,
+            s.TrialRawRelationTarget?.ToString() ?? "", s.EnableTwoLargePrimes,
             s.LargePrime2Bound, s.LargePrime2ThresholdBound, s.CofactorSplitter);
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
@@ -56,6 +57,7 @@ public sealed record SievingParameterSet(
     int SieveBlockSize,
     int BucketLargePrimeCutoff,
     int ResieveLargePrimeCutoff,
+    int SmallPrimeVariationBound,
     int? TrialRawRelationTarget,
     bool EnableTwoLargePrimes,
     long LargePrime2Bound,

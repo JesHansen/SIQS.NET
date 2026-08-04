@@ -9,6 +9,11 @@ internal static class SievingReportFormatter
         var counters = result.Counters;
         var parameters = result.Parameters;
         Console.WriteLine($"  [sieving]     full={counters.FullRelations}, partials={counters.Partials}, raw={counters.RawRelations}, usable={counters.UsableRelations}, polynomials={counters.Polynomials}/{parameters.PolynomialCount}");
+        Console.WriteLine($"  [timing]      elapsed={result.Elapsed.TotalSeconds:F3}s, setup={counters.SetupCpuMs}ms, fill={counters.SieveFillCpuMs}ms, scan={counters.ScanCpuMs}ms, trial-div={counters.TrialDivCpuMs}ms");
+        if (parameters.EffectiveSmallPrimeVariationBound > 0)
+        {
+            Console.WriteLine($"  [spv]         primes={counters.SmallPrimeVariationCount}, allowance={counters.SmallPrimeVariationAllowance}, reports={counters.SmallPrimeVariationReports}, rejected={counters.SmallPrimeVariationRejected}, cpu={counters.SmallPrimeVariationCpuMs}ms");
+        }
         if (parameters.EnableTwoLargePrimes)
         {
             Console.WriteLine($"  [large primes]1LP={counters.OneLargePrimePartials}, 2LP={counters.TwoLargePrimePartials}, 2LP split={counters.TwoLargePrimeSplitSuccesses}/{counters.TwoLargePrimeSplitAttempts}");

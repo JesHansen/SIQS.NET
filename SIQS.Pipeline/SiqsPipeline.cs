@@ -81,7 +81,8 @@ public sealed class SiqsPipeline : ISiqsPipeline
             new Dictionary<string, string> { ["run_dir"] = directory }, directory));
         JobStateMachine.Start(state);
         _stateRepository.Save(directory, state);
-        return await _coordinator.RunAsync(directory, state, normalized, 0, events, cancellationToken);
+        return await _coordinator.RunAsync(directory, state, normalized, 0, events, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     public async Task<FactorizationJobResult> ResumeAsync(
@@ -120,7 +121,8 @@ public sealed class SiqsPipeline : ISiqsPipeline
             resumeIndex == PhaseSequence.IndexOf(SiqsPhase.Sieving), events);
         JobStateMachine.Start(state);
         _stateRepository.Save(jobDirectory, state);
-        return await _coordinator.RunAsync(jobDirectory, state, storedRequest, resumeIndex, events, cancellationToken);
+        return await _coordinator.RunAsync(jobDirectory, state, storedRequest, resumeIndex, events, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private static bool IsCompleted(JobStatus status)

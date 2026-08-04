@@ -206,7 +206,7 @@ public sealed class OverlordService : IAsyncDisposable
         var inbox = job.BeginChunkUpload(leaseId, _options.LeaseTtl);
         if (inbox is null)
         {
-            await body.CopyToAsync(Stream.Null, cancellationToken);
+            await body.CopyToAsync(Stream.Null, cancellationToken).ConfigureAwait(false);
             return new RelationChunkResponse(
                 false, sequence, 0, false, "The job or lease is no longer accepting relation chunks.");
         }
@@ -214,7 +214,7 @@ public sealed class OverlordService : IAsyncDisposable
         RelationChunkResponse response;
         try
         {
-            response = await inbox.StoreAsync(leaseId, sequence, body, cancellationToken);
+            response = await inbox.StoreAsync(leaseId, sequence, body, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -251,7 +251,7 @@ public sealed class OverlordService : IAsyncDisposable
             return new LeaseUploadCompleteResponse(false, "The job or lease is no longer accepting completion markers.");
         }
 
-        var response = await inbox.CompleteLeaseAsync(leaseId, chunkCount, cancellationToken);
+        var response = await inbox.CompleteLeaseAsync(leaseId, chunkCount, cancellationToken).ConfigureAwait(false);
         if (!response.Accepted)
         {
             job.CancelLeaseIngestProtection(leaseId, _options.LeaseTtl);
@@ -303,7 +303,7 @@ public sealed class OverlordService : IAsyncDisposable
     {
         try
         {
-            var result = await pipeline.RunAsync(request, progress: null, cancellationToken, jobId);
+            var result = await pipeline.RunAsync(request, progress: null, cancellationToken, jobId).ConfigureAwait(false);
             job.Finish(DiscoveredFactors.From(result.Factors));
             return result;
         }

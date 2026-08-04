@@ -2,6 +2,7 @@ using System.Text;
 using QS;
 using QS.Presentation;
 using SIQS.Contracts;
+using SIQS.Contracts.Cli;
 
 const string Usage = "usage: qs <number> [options] or qs --resume <run-dir> [options]\n"
     + "  --quiet   print only the factor product (for pipelines)\n"
@@ -22,7 +23,8 @@ try
         return 0;
     }
 
-    var cli = CliArguments.Parse(args);
+    var cli = CommandLine.Parse(args,
+        CommandLineSyntax.FlagAware(allowPositional: true, "quiet", "debug", "continue-after-factor"));
     var presenter = RunPresenterFactory.Create(cli);
 
     using var cancellation = new CancellationTokenSource();

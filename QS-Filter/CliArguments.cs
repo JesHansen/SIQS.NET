@@ -1,4 +1,4 @@
-using System.Globalization;
+using SIQS.Contracts.Cli;
 
 namespace QS_Filter;
 
@@ -18,55 +18,22 @@ internal sealed record FilteringCommand(
 {
     public static FilteringCommand Parse(string[] args)
     {
-        var values = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-        for (var i = 0; i < args.Length; i++)
-        {
-            var arg = args[i];
-            if (!arg.StartsWith("--", StringComparison.Ordinal))
-            {
-                throw new FormatException($"Unexpected argument '{arg}'. Options use --key value form.");
-            }
-
-            var key = arg[2..];
-            if (i + 1 >= args.Length)
-            {
-                throw new FormatException($"Missing value for option '--{key}'.");
-            }
-
-            if (!values.TryGetValue(key, out var list))
-            {
-                values[key] = list = new List<string>();
-            }
-
-            list.Add(args[++i]);
-        }
-
+        var cli = CommandLine.Parse(args, CommandLineSyntax.Strict);
         return new FilteringCommand(
-            GetOptional(values, "factor-base") ?? "factor_base.txt",
-            GetOptional(values, "out-dir") ?? ".",
-            ExpandFiles(values, "relations"),
-            ExpandFiles(values, "partials"),
-            GetOptional(values, "max-partials-per-prime") is { } maxPartials
-                ? int.Parse(maxPartials, CultureInfo.InvariantCulture)
-                : null,
-            GetOptional(values, "filter-spill-dir"),
-            GetOptional(values, "max-cycle-length") is { } maxCycleLength
-                ? int.Parse(maxCycleLength, CultureInfo.InvariantCulture)
-                : null,
-            GetOptional(values, "enable-two-merge") is { } enableTwoMerge
-                ? bool.Parse(enableTwoMerge)
-                : true,
-            GetOptional(values, "two-merge-slack") is { } twoMergeSlack
-                ? int.Parse(twoMergeSlack, CultureInfo.InvariantCulture)
-                : null);
+            cli.GetOptional("factor-base") ?? "factor_base.txt",
+            cli.GetOptional("out-dir") ?? ".",
+            ExpandFiles(cli.GetAll("relations")),
+            ExpandFiles(cli.GetAll("partials")),
+            cli.GetInt("max-partials-per-prime"),
+            cli.GetOptional("filter-spill-dir"),
+            cli.GetInt("max-cycle-length"),
+            cli.GetBool("enable-two-merge") ?? true,
+            cli.GetInt("two-merge-slack"));
     }
 
-    private static string? GetOptional(IReadOnlyDictionary<string, List<string>> values, string key)
-        => values.TryGetValue(key, out var list) ? list[^1] : null;
-
-    private static IReadOnlyList<string> ExpandFiles(IReadOnlyDictionary<string, List<string>> values, string key)
+    private static IReadOnlyList<string> ExpandFiles(IReadOnlyList<string> patterns)
     {
-        if (!values.TryGetValue(key, out var patterns))
+        if (patterns.Count == 0)
         {
             return Array.Empty<string>();
         }

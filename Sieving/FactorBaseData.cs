@@ -10,8 +10,30 @@ namespace Sieving;
 /// </summary>
 public sealed class FactorBaseData
 {
+    private int[]? _primes32;
+
     public required int Count { get; init; }
     public required long[] Primes { get; init; }
+
+    /// <summary>
+    /// 32-bit view of <see cref="Primes"/> for SIMD sieve kernels. Factor-base primes are already
+    /// constrained to the signed 32-bit range by the int-indexed sieve representation. The view is
+    /// materialized once, on first use, and safely shared by all workers.
+    /// </summary>
+    internal int[] Primes32
+    {
+        get
+        {
+            var primes = Volatile.Read(ref _primes32);
+            if (primes is not null)
+            {
+                return primes;
+            }
+
+            var candidate = Array.ConvertAll(Primes, static p => checked((int)p));
+            return Interlocked.CompareExchange(ref _primes32, candidate, null) ?? candidate;
+        }
+    }
     public required int[] Columns { get; init; }
     public required long[] Root1 { get; init; }
     public required long[] Root2 { get; init; }

@@ -20,6 +20,7 @@ public sealed record SievingParameters(
     int SieveBlockSize = 0,
     int BucketLargePrimeCutoff = 0,
     int ResieveLargePrimeCutoff = 0,
+    int SmallPrimeVariationBound = 0,
     int? TrialRawRelationTarget = null,
     bool EnableTwoLargePrimes = false,
     long LargePrime2Bound = 0,
@@ -31,9 +32,27 @@ public sealed record SievingParameters(
     internal const int C100PlusMinimumRelationTargetSurplus = 10_000;
     internal const int C70ToC99MinimumRelationTargetSurplus = 2_048;
     internal const long C100LargePrimeBound = 1_000_000_000;
+    internal const int SmallPrimeVariationDefaultMinDigits = 35;
+    internal const int SmallPrimeVariationDefaultBound = 256;
     internal const int TwoLargePrimeDefaultMinDigits = 110;
 
     internal bool DisableVectorScan { get; init; }
+    internal bool DisableVectorRootUpdate { get; init; }
+    internal bool DisableBandedDirectSieve { get; init; }
+    internal bool EnableDetailedSieveTiming { get; init; }
+    internal bool UseRootOnlyBucketState { get; init; } = true;
+    internal int BucketCapacityPermille { get; init; } = 1_100;
+    internal bool UseCandidateMajorResieve { get; init; }
+    internal bool UseVectorCandidateMajorResieve { get; init; } = true;
+    internal bool UseContiguousVectorResieveLoads { get; init; } = true;
+    internal int VectorCandidateMajorMaximumCandidates { get; init; } = 16;
+    internal bool UseVectorMediumPrimeTrialDivision { get; init; } = true;
+    internal bool UseFlatCandidateOffsetMap { get; init; }
+    internal int FlatCandidateOffsetMapMinimumCandidates { get; init; } = 16;
+    internal int VectorCandidateMajorBucketMaximumCandidates { get; init; } = 15;
+    internal bool UseGeometryAdaptiveBucketMatching { get; init; } = true;
+    internal int CandidateResieveMinimumCandidates { get; init; } = 2;
+    internal bool CaptureCompositeResiduals { get; init; }
 
     /// <summary>
     /// Effective degree of parallelism: <c>Environment.ProcessorCount</c> when <see cref="Parallelism"/>
@@ -61,6 +80,12 @@ public sealed record SievingParameters(
     /// once per block instead of root-gating them for every candidate. 0 disables resieving.
     /// </summary>
     public int EffectiveResieveLargePrimeCutoff => ResieveLargePrimeCutoff;
+
+    /// <summary>
+    /// Upper prime bound for small-prime variation. Primes at or below the bound are
+    /// omitted from dense sieve fill and recovered only for provisional reports. Zero disables it.
+    /// </summary>
+    public int EffectiveSmallPrimeVariationBound => SmallPrimeVariationBound;
 
     public static SievingParameters Default(FactorBaseDocument factorBase)
     {
@@ -101,16 +126,23 @@ public sealed record SievingParameters(
             SieveBlockSize: sieveBlockSize,
             BucketLargePrimeCutoff: SelectBucketLargePrimeCutoff(digits),
             ResieveLargePrimeCutoff: SelectResieveLargePrimeCutoff(digits),
+            SmallPrimeVariationBound: SelectSmallPrimeVariationBound(digits),
             EnableTwoLargePrimes: digits >= TwoLargePrimeDefaultMinDigits,
             LargePrime2Bound: largePrime2Bound,
             LargePrime2ThresholdBound: largePrime2ThresholdBound,
-            CofactorSplitter: CofactorSplitterKinds.SelectFor(largePrime2Bound));
+            // When two-large-primes are active the residuals are large (52+ bits at C110), where the
+            // micro-ECM stage-two hybrid is a clear win over SQUFOF/rho at identical yield
+            // (Experiment 37). Below that gate the cofactor path is unused, so keep the historical
+            // SQUFOF/rho auto-selection there.
+            CofactorSplitter: digits >= TwoLargePrimeDefaultMinDigits
+                ? CofactorSplitterKind.MicroEcmStage2
+                : CofactorSplitterKinds.SelectFor(largePrime2Bound));
     }
 
     // ── Deterministic default tuning selectors ──────────────────────────────────────────────
     // Each selector is a pure function of the digit count (and the factor-base bound where
-    // relevant). The measured C13-C115 profile is deliberately monotonic: larger inputs may move
-    // to a higher tier, but never back to a smaller one. See the 2026-07-30 tuning report.
+    // relevant). Structural work parameters are monotonic. Kernel boundaries may move downward at
+    // a measured crossover when larger geometry changes the balance between two execution paths.
 
     /// <summary>
     /// Sieve half-interval M. Powers of two approximate a log-linear rise from 128 at C13 to
@@ -143,11 +175,25 @@ public sealed record SievingParameters(
 
     /// <summary>Prime cutoff for bucket sieving; enabled where the factor base is wide enough to benefit.</summary>
     internal static int SelectBucketLargePrimeCutoff(int digits)
-        => digits >= 85 ? 1_048_576 : 0;
+        => digits >= 111 ? 1_048_576
+            : digits >= 100 ? 655_360
+            : digits >= 85 ? 1_048_576
+            : 0;
 
     /// <summary>Prime cutoff for candidate resieving; enabled with the bucket tier.</summary>
     internal static int SelectResieveLargePrimeCutoff(int digits)
         => digits >= 85 ? 262_144 : 0;
+
+    /// <summary>
+    /// Small-prime variation is a measured net win from C35. Wider bounds repay their additional
+    /// exact-recovery work as the sieve interval grows, then ease at C100+ where scan cost rises.
+    /// </summary>
+    internal static int SelectSmallPrimeVariationBound(int digits)
+        => digits >= 100 ? 768
+            : digits >= 60 ? 1_024
+            : digits >= 50 ? 512
+            : digits >= SmallPrimeVariationDefaultMinDigits ? SmallPrimeVariationDefaultBound
+            : 0;
 
     /// <summary>Target polynomial supply multiplier relative to the relation target.</summary>
     internal static long SelectPolynomialSupplyMultiplier(int digits)

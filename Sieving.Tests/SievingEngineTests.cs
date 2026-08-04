@@ -262,6 +262,59 @@ public class SievingEngineTests
     }
 
     [Fact]
+    public void Small_prime_variation_recovers_valid_relations_and_rejects_provisional_reports()
+    {
+        var fb = FactorBase("1022117", 1000, 1);
+        var parameters = SmallDeterministicParameters(fb) with
+        {
+            SieveBlockSize = 4_096,
+            SmallPrimeVariationBound = 256,
+        };
+
+        var result = SievingEngine.Sieve(fb, parameters);
+        var relations = result.FullRelations.Concat(result.Partials).ToArray();
+
+        Assert.NotEmpty(relations);
+        Assert.All(relations, relation => AssertRelationValid(relation, fb));
+        Assert.True(result.Counters.SmallPrimeVariationCount > 0);
+        Assert.True(result.Counters.SmallPrimeVariationAllowance > 0);
+        Assert.True(result.Counters.SmallPrimeVariationReports > result.Counters.Candidates);
+        Assert.True(result.Counters.SmallPrimeVariationRejected > 0);
+        Assert.True(result.Counters.SmallPrimeVariationCpuMs >= 0);
+    }
+
+    [Fact]
+    public void Vector_and_modulo_gray_root_updates_produce_same_single_thread_relation_output()
+    {
+        var fb = FactorBase("1022117", 1000, 1);
+        var vectorRoots = SmallDeterministicParameters(fb) with
+        {
+            SieveBlockSize = 4_096,
+            RelationTarget = int.MaxValue,
+            PolynomialCount = 32,
+        };
+        var moduloRoots = vectorRoots with { DisableVectorRootUpdate = true };
+
+        var vectorResult = SievingEngine.Sieve(fb, vectorRoots);
+        var moduloResult = SievingEngine.Sieve(fb, moduloRoots);
+
+        Assert.Equal(AllRelationSignatures(vectorResult), AllRelationSignatures(moduloResult));
+    }
+
+    [Fact]
+    public void Banded_and_generic_direct_sieve_produce_same_single_thread_relation_output()
+    {
+        var fb = FactorBase("1022117", 1000, 1);
+        var banded = SmallDeterministicParameters(fb) with { SieveBlockSize = 256 };
+        var generic = banded with { DisableBandedDirectSieve = true };
+
+        var bandedResult = SievingEngine.Sieve(fb, banded);
+        var genericResult = SievingEngine.Sieve(fb, generic);
+
+        Assert.Equal(AllRelationSignatures(genericResult), AllRelationSignatures(bandedResult));
+    }
+
+    [Fact]
     public void Resume_state_skips_completed_a_indices_and_preserves_relation_set()
     {
         var fb = FactorBase("1022117", 1000, 1);
@@ -531,9 +584,70 @@ public class SievingEngineTests
         [
             baseline with { ResieveLargePrimeCutoff = 3 },
             baseline with { BucketLargePrimeCutoff = 401 },
+            baseline with
+            {
+                BucketLargePrimeCutoff = 401,
+                ResieveLargePrimeCutoff = 101,
+                CandidateResieveMinimumCandidates = 1,
+            },
             baseline with { BucketLargePrimeCutoff = 401, ResieveLargePrimeCutoff = 101 },
             baseline with { BucketLargePrimeCutoff = 401, ResieveLargePrimeCutoff = 401 },
             baseline with { BucketLargePrimeCutoff = 401, ResieveLargePrimeCutoff = 997 },
+            baseline with
+            {
+                BucketLargePrimeCutoff = 401,
+                ResieveLargePrimeCutoff = 101,
+                UseCandidateMajorResieve = true,
+            },
+            baseline with
+            {
+                BucketLargePrimeCutoff = 401,
+                ResieveLargePrimeCutoff = 101,
+                UseFlatCandidateOffsetMap = true,
+            },
+            baseline with
+            {
+                BucketLargePrimeCutoff = 401,
+                ResieveLargePrimeCutoff = 101,
+                UseVectorCandidateMajorResieve = true,
+            },
+            baseline with
+            {
+                BucketLargePrimeCutoff = 401,
+                ResieveLargePrimeCutoff = 101,
+                UseVectorCandidateMajorResieve = true,
+                UseContiguousVectorResieveLoads = true,
+            },
+            baseline with
+            {
+                BucketLargePrimeCutoff = 401,
+                ResieveLargePrimeCutoff = 101,
+                UseRootOnlyBucketState = false,
+            },
+            baseline with
+            {
+                BucketLargePrimeCutoff = 401,
+                ResieveLargePrimeCutoff = 101,
+                UseVectorCandidateMajorResieve = true,
+                UseVectorMediumPrimeTrialDivision = true,
+            },
+            baseline with
+            {
+                BucketLargePrimeCutoff = 401,
+                ResieveLargePrimeCutoff = 101,
+                VectorCandidateMajorBucketMaximumCandidates = 2,
+                FlatCandidateOffsetMapMinimumCandidates = 3,
+            },
+            baseline with
+            {
+                BucketLargePrimeCutoff = 401,
+                ResieveLargePrimeCutoff = 101,
+                UseVectorCandidateMajorResieve = false,
+                UseVectorMediumPrimeTrialDivision = false,
+                UseGeometryAdaptiveBucketMatching = false,
+                VectorCandidateMajorBucketMaximumCandidates = 0,
+                FlatCandidateOffsetMapMinimumCandidates = int.MaxValue,
+            },
         ];
 
         var first = SievingEngine.Sieve(fb, baseline);
@@ -560,6 +674,7 @@ public class SievingEngineTests
 
         Assert.Equal(14, sieve[3]);
         Assert.Equal(1, buckets.OverflowHitCount);
+        Assert.Equal(2, buckets.MaximumHitCount);
         var spill = Assert.Single(buckets.OverflowAt(new(0))!);
         Assert.Equal(3, spill.Offset.Value);
         Assert.Equal(11, spill.PrimeIndex.Value);
@@ -579,6 +694,23 @@ public class SievingEngineTests
 
         Assert.Equal(new[] { 7, 11 }, primeHits[0]);
         Assert.Empty(primeHits[1]);
+    }
+
+    [Fact]
+    public void Vector_candidate_major_bucket_matching_covers_lanes_tail_and_spill()
+    {
+        var buckets = new LargePrimeBuckets(
+            new(new(1), new(10), new(32)), assertOnOverflow: false);
+        for (var i = 0; i < 10; i++)
+            buckets.Add(new(0), new(i % 3), new(100 + i), new(5));
+        buckets.Add(new(0), new(2), new(999), new(5));
+
+        var expected = new List<int>[] { [], [], [] };
+        var actual = new List<int>[] { [], [], [] };
+        buckets.CollectCandidateHits(new(0), [0, 1, 2], expected);
+        buckets.CollectCandidateHitsCandidateMajorVector(new(0), [0, 1, 2], actual);
+
+        for (var i = 0; i < expected.Length; i++) Assert.Equal(expected[i], actual[i]);
     }
 
     [Fact]
@@ -636,6 +768,8 @@ public class SievingEngineTests
         Assert.True(result.Counters.TrialDivPostParityCpuMs >= 0);
         Assert.True(result.Counters.BucketOverflowHits >= 0);
         Assert.True(result.Counters.BucketSlabBytesPerWorker >= 0);
+        Assert.True(result.Counters.BucketMaximumHitsPerBucket >= 0);
+        Assert.True(result.Counters.BucketCapacityPerBucket >= 0);
     }
 
     [Fact]
@@ -653,9 +787,15 @@ public class SievingEngineTests
 
         Assert.Equal(0, result.Counters.BucketOverflowHits);
         Assert.True(result.Counters.BucketSlabBytesPerWorker > 0);
+        Assert.True(result.Counters.BucketMaximumHitsPerBucket > 0);
+        Assert.True(result.Counters.BucketCapacityPerBucket
+            >= result.Counters.BucketMaximumHitsPerBucket);
         var final = Assert.Single(progress.Events, e => e.Message == "sieving complete");
         Assert.Equal("0", final.Counters["bucket_overflow_hits"]);
         Assert.True(long.Parse(final.Counters["bucket_slab_bytes_per_worker"]) > 0);
+        Assert.True(long.Parse(final.Counters["bucket_maximum_hits_per_bucket"]) > 0);
+        Assert.True(long.Parse(final.Counters["bucket_capacity_per_bucket"])
+            >= long.Parse(final.Counters["bucket_maximum_hits_per_bucket"]));
         Assert.True(long.Parse(final.Counters["blocks"]) > 0);
         Assert.Contains("candidates_per_block", final.Counters.Keys);
     }
@@ -871,6 +1011,8 @@ public class SievingEngineTests
 
     [Theory]
     [InlineData(CofactorSplitterKind.Squfof)]
+    [InlineData(CofactorSplitterKind.MicroEcmSqufof)]
+    [InlineData(CofactorSplitterKind.MicroEcmStage2)]
     [InlineData(CofactorSplitterKind.SqufofRho)]
     public void Two_large_prime_splitter_modes_accept_two_primes_inside_lp2_bound(CofactorSplitterKind splitter)
     {

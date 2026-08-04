@@ -1,5 +1,6 @@
 using QsSieve;
 using SIQS.Contracts;
+using SIQS.Contracts.Cli;
 
 const string Usage = "usage: qs-sieve --factor-base factor_base.txt --out-dir . [sieving options]";
 
@@ -12,7 +13,7 @@ try
     }
 
     var result = new SievingCommandHandler().Execute(
-        CliArguments.Parse(args),
+        CommandLine.Parse(args, CommandLineSyntax.Strict),
         new Progress<SiqsProgressEvent>(e => Console.Error.WriteLine($"  [sieving]     {e.Message}")));
     SievingReportFormatter.Write(result);
     return 0;

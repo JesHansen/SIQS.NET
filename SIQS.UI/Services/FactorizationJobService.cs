@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Text.Json;
 using SIQS.Contracts;
 using SIQS.Pipeline;
 
@@ -94,7 +95,8 @@ public sealed class FactorizationJobService
                 var job = JobStore.LoadSnapshot(dir);
                 summaries.Add(new JobSummary(job.JobId, job.TargetN, job.Status, job.CreatedUtc));
             }
-            catch
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                or FormatException or JsonException)
             {
                 // Skip directories without a readable job.json.
             }

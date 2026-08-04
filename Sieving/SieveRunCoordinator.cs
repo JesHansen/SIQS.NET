@@ -73,6 +73,10 @@ internal static class SieveRunCoordinator
             byteLogP[i] = (byte)Math.Max(1, (int)Math.Round(fb.LogP[i] * byteRescale));
 
         var smallPrimeMasks = SmallPrimeFillMasks.Build(fb, byteLogP);
+        var smallPrimeVariation = SmallPrimeVariation.Build(
+            fb, byteLogP, parameters.EffectiveSmallPrimeVariationBound);
+        var directSievePlan = DirectSievePlan.Build(
+            fb, Math.Max(smallPrimeMasks.Count, smallPrimeVariation.Count), parameters);
 
         var totals = new WorkerTotals();
         var tally = new RelationTally();
@@ -87,7 +91,7 @@ internal static class SieveRunCoordinator
                     continue;
                 }
 
-                tally.Count(record, includeInTotals: true);
+                tally.Count(record, isResumedReplay: true);
             }
 
             foreach (var aIndex in completedAIndices)
@@ -119,7 +123,10 @@ internal static class SieveRunCoordinator
             Parallel.ForEach(
                 workPartitioner,
                 pOpts,
-                () => new PolynomialSieveWorker(Math.Min(blockLength, parameters.EffectiveSieveBlockSize)),
+                () => new PolynomialSieveWorker(Math.Min(blockLength, parameters.EffectiveSieveBlockSize))
+                {
+                    CompositeResiduals = parameters.CaptureCompositeResiduals ? [] : null,
+                },
                 (item, state, worker) =>
                 {
                     Interlocked.Increment(ref activeAFamilies);
@@ -166,7 +173,8 @@ internal static class SieveRunCoordinator
                             var sieveContext = new PolynomialSieveContext(
                                 fb, blockLength, m, poly, isAPrime, invA, member, grayRootDeltas,
                                 parameters, item.AIdx, currentPolyInFamily, byteLogP, byteRescale,
-                                smallPrimeMasks.Masks, smallPrimeMasks.NextPhase, smallPrimeMasks.Count);
+                                smallPrimeMasks.Masks, smallPrimeMasks.NextPhase, smallPrimeMasks.Count,
+                                smallPrimeVariation, directSievePlan);
                             worker.SieveAndScanBlocked(sieveContext);
                             polyInFamily++;
 
@@ -174,14 +182,13 @@ internal static class SieveRunCoordinator
                             // Full relations: increment the shared full-relation count.
                             // Partial relations: update the shared large-prime dictionary; when a second
                             // partial with the same large prime is seen, increment the shared usable-pair count.
-                            foreach (var tagged in worker.Pending)
+                            foreach (var record in worker.Pending)
                             {
-                                var record = tagged.WithStableIds();
                                 if (!tally.TryRemember(record, out var duplicate))
                                 {
                                     if (duplicate)
                                     {
-                                        if (tagged.IsPartial)
+                                        if (record.Kind == RelationKind.Partial)
                                         {
                                             worker.Metrics.Relations.Partials--;
                                             if (record.LargePrimes.Count == 1) worker.Metrics.Relations.OneLargePrimePartials--;
@@ -196,7 +203,7 @@ internal static class SieveRunCoordinator
                                     }
                                 }
 
-                                tally.Count(record, includeInTotals: false);
+                                tally.Count(record, isResumedReplay: false);
                                 sink.Add(record);
                             }
                             worker.Pending.Clear();
@@ -253,6 +260,14 @@ internal static class SieveRunCoordinator
         {
             Polynomials = finalPolys,
             Candidates = totals.Relations.Candidates,
+            SmallPrimeVariationReports = totals.Relations.SmallPrimeVariationReports,
+            SmallPrimeVariationRejected = totals.Relations.SmallPrimeVariationRejected,
+            SmallPrimeVariationCount = smallPrimeVariation.Count,
+            SmallPrimeVariationAllowance = smallPrimeVariation.Allowance,
+            PreliminaryReports = totals.Relations.PreliminaryReports,
+            ExactThresholdRejects = totals.Relations.ExactThresholdRejects,
+            DirectGatedCandidateBlocks = totals.Relations.DirectGatedCandidateBlocks,
+            ResievedCandidateBlocks = totals.Relations.ResievedCandidateBlocks,
             Blocks = totals.Relations.Blocks,
             FullRelations = finalFulls,
             Partials = finalPartials,
@@ -270,10 +285,22 @@ internal static class SieveRunCoordinator
             TwoLargePrimeResidualBitsGt64 = totals.TwoLargePrime.ResidualBitsGt64,
             CofactorSqufofAttempts = totals.Cofactor.SqufofAttempts,
             CofactorSqufofSuccesses = totals.Cofactor.SqufofSuccesses,
+            CofactorMicroEcmAttempts = totals.Cofactor.MicroEcmAttempts,
+            CofactorMicroEcmSuccesses = totals.Cofactor.MicroEcmSuccesses,
             CofactorRhoAttempts = totals.Cofactor.RhoAttempts,
             CofactorRhoSuccesses = totals.Cofactor.RhoSuccesses,
             BucketOverflowHits = totals.BucketOverflowHits,
             BucketSlabBytesPerWorker = totals.BucketSlabBytesPerWorker,
+            BucketMaximumHitsPerBucket = totals.BucketMaximumHitsPerBucket,
+            BucketCapacityPerBucket = totals.BucketCapacityPerBucket,
+            BucketBinaryCandidateBlocks = totals.BucketBinaryCandidateBlocks,
+            BucketCandidateMajorBlocks = totals.BucketCandidateMajorBlocks,
+            BucketOffsetMapBlocks = totals.BucketOffsetMapBlocks,
+            BucketCandidateHitInspections = totals.BucketCandidateHitInspections,
+            BucketCandidateVectorGroups = totals.BucketCandidateVectorGroups,
+            BucketCandidateMatchingMasks = totals.BucketCandidateMatchingMasks,
+            BucketOffsetMapProbes = totals.BucketOffsetMapProbes,
+            BucketDecodedPrimeHits = totals.BucketDecodedPrimeHits,
             Discarded = totals.Relations.Discarded,
             RelationTarget = parameters.RelationTarget,
             TrialRawRelationTarget = parameters.TrialRawRelationTarget,
@@ -286,14 +313,24 @@ internal static class SieveRunCoordinator
             SetupCpuMs = ToMs(totals.Ticks.Setup),
             SieveFillCpuMs = ToMs(totals.Ticks.SieveFill),
             SieveInitCpuMs = ToMs(totals.Ticks.SieveInit),
+            SieveClearCpuMs = ToMs(totals.Ticks.SieveClear),
+            SmallPrimeFillCpuMs = ToMs(totals.Ticks.SmallPrimeFill),
+            DirectFillCpuMs = ToMs(totals.Ticks.DirectFill),
+            BucketScatterCpuMs = ToMs(totals.Ticks.BucketScatter),
+            BucketReplayCpuMs = ToMs(totals.Ticks.BucketReplay),
             ScanCpuMs = ToMs(totals.Ticks.Scan),
+            SmallPrimeVariationCpuMs = ToMs(totals.Ticks.SmallPrimeVariation),
             PolyEvalCpuMs = ToMs(totals.Ticks.PolyEval),
+            KnownHitCollectionCpuMs = ToMs(totals.Ticks.KnownHitCollection),
+            DirectKnownHitCollectionCpuMs = ToMs(totals.Ticks.DirectKnownHitCollection),
+            BucketKnownHitCollectionCpuMs = ToMs(totals.Ticks.BucketKnownHitCollection),
             TrialDivCpuMs = ToMs(totals.Ticks.TrialDiv),
             TrialDivPreCpuMs = ToMs(totals.Ticks.TrialDivPre),
             TrialDivPostCpuMs = ToMs(totals.Ticks.TrialDivPost),
             TrialDivPostAPosCpuMs = ToMs(totals.Ticks.TrialDivPostAPos),
             TrialDivPostCheckCpuMs = ToMs(totals.Ticks.TrialDivPostCheck),
             TrialDivPostParityCpuMs = ToMs(totals.Ticks.TrialDivPostParity),
+            CapturedCompositeResiduals = totals.CompositeResiduals,
         };
 
         SievingProgressReporter.Report(progress, counters, current: null);

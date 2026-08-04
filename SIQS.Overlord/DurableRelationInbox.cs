@@ -150,21 +150,22 @@ internal sealed class DurableRelationInbox
                 return new RelationChunkResponse(true, sequence, existingBytes, true, null);
             }
 
-            await using (var destination = new FileStream(
-                             temporaryPath,
-                             new FileStreamOptions
-                             {
-                                 Mode = FileMode.CreateNew,
-                                 Access = FileAccess.Write,
-                                 Share = FileShare.None,
-                                 BufferSize = 64 * 1024,
-                                 Options = FileOptions.Asynchronous | FileOptions.SequentialScan,
-                             }))
+            var destination = new FileStream(
+                temporaryPath,
+                new FileStreamOptions
+                {
+                    Mode = FileMode.CreateNew,
+                    Access = FileAccess.Write,
+                    Share = FileShare.None,
+                    BufferSize = 64 * 1024,
+                    Options = FileOptions.Asynchronous | FileOptions.SequentialScan,
+                });
+            await using (destination.ConfigureAwait(false))
             {
                 var buffer = new byte[64 * 1024];
                 while (true)
                 {
-                    var read = await body.ReadAsync(buffer, cancellationToken);
+                    var read = await body.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
                     if (read == 0)
                     {
                         break;
@@ -181,10 +182,10 @@ internal sealed class DurableRelationInbox
                         throw new InboxLimitException($"The relation inbox quota of {_maxSpoolBytes} bytes is full.");
                     }
 
-                    await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                    await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
                 }
 
-                await destination.FlushAsync(cancellationToken);
+                await destination.FlushAsync(cancellationToken).ConfigureAwait(false);
                 destination.Flush(flushToDisk: true);
             }
 
@@ -195,8 +196,7 @@ internal sealed class DurableRelationInbox
             catch (IOException) when (TryFindExistingChunk(
                                           readyPath, processingPath, donePath, failedPath, receiptPath, out var racedBytes))
             {
-                File.Delete(temporaryPath);
-                Interlocked.Add(ref _durableBytes, -written);
+                RollbackSpooled(temporaryPath, written);
                 return new RelationChunkResponse(true, sequence, racedBytes, true, null);
             }
 
@@ -206,28 +206,32 @@ internal sealed class DurableRelationInbox
         }
         catch (InboxLimitException ex)
         {
-            if (File.Exists(temporaryPath))
-            {
-                File.Delete(temporaryPath);
-            }
-
-            Interlocked.Add(ref _durableBytes, -written);
+            RollbackSpooled(temporaryPath, written);
             return new RelationChunkResponse(false, sequence, 0, false, ex.Message);
         }
         catch
         {
-            if (File.Exists(temporaryPath))
-            {
-                File.Delete(temporaryPath);
-            }
-
-            Interlocked.Add(ref _durableBytes, -written);
+            RollbackSpooled(temporaryPath, written);
             throw;
         }
         finally
         {
             EndWrite();
         }
+    }
+
+    /// <summary>
+    /// Cleans up a failed chunk write: deletes the temporary spool file if present and rolls back
+    /// this chunk's contribution to the durable-byte quota.
+    /// </summary>
+    private void RollbackSpooled(string temporaryPath, long written)
+    {
+        if (File.Exists(temporaryPath))
+        {
+            File.Delete(temporaryPath);
+        }
+
+        Interlocked.Add(ref _durableBytes, -written);
     }
 
     public async Task<LeaseUploadCompleteResponse> CompleteLeaseAsync(
@@ -259,7 +263,7 @@ internal sealed class DurableRelationInbox
             await WriteDurableFileAsync(
                 readyPath,
                 Encoding.UTF8.GetBytes(chunkCount.ToString(System.Globalization.CultureInfo.InvariantCulture)),
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             Signal();
             return new LeaseUploadCompleteResponse(true, null);
         }
@@ -446,19 +450,20 @@ internal sealed class DurableRelationInbox
     private async Task WriteDurableFileAsync(string path, byte[] content, CancellationToken cancellationToken)
     {
         var temporaryPath = path + $".{Guid.NewGuid():N}.part";
-        await using (var stream = new FileStream(
-                         temporaryPath,
-                         new FileStreamOptions
-                         {
-                             Mode = FileMode.CreateNew,
-                             Access = FileAccess.Write,
-                             Share = FileShare.None,
-                             BufferSize = 4096,
-                             Options = FileOptions.Asynchronous,
-                         }))
+        var stream = new FileStream(
+            temporaryPath,
+            new FileStreamOptions
+            {
+                Mode = FileMode.CreateNew,
+                Access = FileAccess.Write,
+                Share = FileShare.None,
+                BufferSize = 4096,
+                Options = FileOptions.Asynchronous,
+            });
+        await using (stream.ConfigureAwait(false))
         {
-            await stream.WriteAsync(content, cancellationToken);
-            await stream.FlushAsync(cancellationToken);
+            await stream.WriteAsync(content, cancellationToken).ConfigureAwait(false);
+            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             stream.Flush(flushToDisk: true);
         }
 

@@ -1,6 +1,7 @@
 using System.Globalization;
 using LinearAlgebra;
 using QS_LinAlg;
+using SIQS.Contracts.Cli;
 
 const string Usage = "usage: qs-linalg --meta matrix_meta.txt --matrix filtered_matrix.txt --relations relations_filtered.txt --out dependencies.txt [--telemetry linalg_telemetry.txt] [--max-dependencies N] [--linalg-parallelism N]";
 
@@ -13,7 +14,8 @@ try
         return 0;
     }
 
-    var result = new LinearAlgebraCommandHandler().Execute(CliArguments.Parse(args), new ConsoleLanczosProgress());
+    var result = new LinearAlgebraCommandHandler().Execute(
+        CommandLine.Parse(args, CommandLineSyntax.Strict), new ConsoleLanczosProgress());
     var stats = result.Stats;
     var percent = result.Metadata.ColumnCount > 0 ? 100.0 * result.NonZeroSurplus / result.Metadata.ColumnCount : 0.0;
     Console.WriteLine($"{ConsoleTelemetry.Prefix("[linear algebra]")}matrix={result.Metadata.RowCount}x{result.Metadata.ColumnCount}, nonzero={stats.NonZeroRows}, zero={stats.ZeroRows}, surplus={result.NonZeroSurplus} ({percent:0.###}%), solver={result.Solve.Solver}");

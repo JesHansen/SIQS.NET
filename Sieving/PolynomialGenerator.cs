@@ -313,6 +313,16 @@ public static class PolynomialGenerator
     /// <summary>Builds the fixed-A family in canonical Gray-code order, with transition metadata.</summary>
     public static PolynomialFamilyBatch BuildFamily(FactorBaseData fb, int[] aPositions)
     {
+        ValidateAPositions(fb, aPositions);
+        var positions = aPositions.OrderBy(p => fb.Columns[p]).ToArray();
+        var a = ComputeFamilyA(fb, positions);
+        var bi = ComputeBTerms(fb, positions, a);
+        var members = BuildFamilyMembers(fb, positions, a, bi);
+        return new PolynomialFamilyBatch(a, positions, bi, members);
+    }
+
+    private static void ValidateAPositions(FactorBaseData fb, int[] aPositions)
+    {
         foreach (var pos in aPositions)
         {
             if ((uint)pos >= (uint)fb.Count)
@@ -320,10 +330,11 @@ public static class PolynomialGenerator
                 throw new ArgumentOutOfRangeException(nameof(aPositions), $"A-prime position {pos} is outside the factor base.");
             }
         }
+    }
 
-        var positions = aPositions.OrderBy(p => fb.Columns[p]).ToArray();
-        var s = positions.Length;
-
+    /// <summary>Computes A as the product of the selected primes, rejecting any that divide the multiplier.</summary>
+    private static BigInteger ComputeFamilyA(FactorBaseData fb, int[] positions)
+    {
         var a = BigInteger.One;
         foreach (var pos in positions)
         {
@@ -337,9 +348,17 @@ public static class PolynomialGenerator
             a *= fb.Primes[pos];
         }
 
-        // B_i = (A / q_i) * gamma_i, where gamma_i = root1_i * inverse(A / q_i) mod q_i (reduced).
-        var bi = new BigInteger[s];
-        for (var i = 0; i < s; i++)
+        return a;
+    }
+
+    /// <summary>
+    /// Computes the per-prime terms B_i = (A / q_i) * gamma_i, where gamma_i = root1_i *
+    /// inverse(A / q_i) mod q_i (reduced), from which each member's B is assembled by sign vector.
+    /// </summary>
+    private static BigInteger[] ComputeBTerms(FactorBaseData fb, int[] positions, BigInteger a)
+    {
+        var bi = new BigInteger[positions.Length];
+        for (var i = 0; i < positions.Length; i++)
         {
             var q = fb.Primes[positions[i]];
             var aOverQ = a / q;
@@ -352,6 +371,18 @@ public static class PolynomialGenerator
 
             bi[i] = aOverQ * gamma;
         }
+
+        return bi;
+    }
+
+    /// <summary>
+    /// Emits one canonical member per Gray-code sign vector, each carrying the incremental flip
+    /// metadata that lets the sieve update roots by a single delta between neighbours.
+    /// </summary>
+    private static List<PolynomialFamilyMember> BuildFamilyMembers(
+        FactorBaseData fb, int[] positions, BigInteger a, BigInteger[] bi)
+    {
+        var s = positions.Length;
 
         // The sieve interval is symmetric, so the sign vector eps and its negation produce
         // conjugate polynomials: V_B(x) == V_-B(-x), with T changing sign. Emitting both halves
@@ -400,6 +431,14 @@ public static class PolynomialGenerator
                 var rawDelta = 2 * flipDirection * bi[flipIndex.Value];
                 var correction = (b - prev - rawDelta) / a;
                 normalizationCorrection = (int)correction;
+                // prev and b are both in (-A/2, A/2], while 0 <= 2*B_i < A for
+                // an odd A-prime. Their difference from the signed raw delta is a
+                // multiple of A strictly between -2A and 2A, hence only -A, 0, or A.
+                if (normalizationCorrection is < -1 or > 1)
+                {
+                    throw new InvalidOperationException(
+                        $"Polynomial family normalization correction is outside the Gray root-update bound: {normalizationCorrection}.");
+                }
             }
 
             members.Add(new PolynomialFamilyMember(
@@ -411,7 +450,7 @@ public static class PolynomialGenerator
             previousGray = gray;
         }
 
-        return new PolynomialFamilyBatch(a, positions, bi, members);
+        return members;
     }
 
     private static IEnumerable<int[]> Combinations(int[] items, int choose)

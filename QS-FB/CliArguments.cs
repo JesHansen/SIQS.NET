@@ -1,5 +1,5 @@
-using System.Globalization;
 using System.Numerics;
+using SIQS.Contracts.Cli;
 
 namespace QS_FB;
 
@@ -8,36 +8,11 @@ internal sealed record FactorBaseCommand(BigInteger TargetN, long? Bound, BigInt
 {
     public static FactorBaseCommand Parse(string[] args)
     {
-        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        for (var i = 0; i < args.Length; i++)
-        {
-            var arg = args[i];
-            if (!arg.StartsWith("--", StringComparison.Ordinal))
-            {
-                throw new FormatException($"Unexpected argument '{arg}'. Options use --key value form.");
-            }
-
-            var key = arg[2..];
-            if (i + 1 >= args.Length)
-            {
-                throw new FormatException($"Missing value for option '--{key}'.");
-            }
-
-            values[key] = args[++i];
-        }
-
+        var cli = CommandLine.Parse(args, CommandLineSyntax.Strict);
         return new FactorBaseCommand(
-            BigInteger.Parse(GetRequired(values, "n"), CultureInfo.InvariantCulture),
-            GetOptional(values, "bound") is { } bound ? long.Parse(bound, CultureInfo.InvariantCulture) : null,
-            GetOptional(values, "multiplier") is { } multiplier ? BigInteger.Parse(multiplier, CultureInfo.InvariantCulture) : null,
-            GetOptional(values, "out") ?? "factor_base.txt");
+            cli.GetBigInteger("n") ?? throw new FormatException("Required option '--n' was not supplied."),
+            cli.GetLong("bound"),
+            cli.GetBigInteger("multiplier"),
+            cli.GetOptional("out") ?? "factor_base.txt");
     }
-
-    private static string GetRequired(IReadOnlyDictionary<string, string> values, string key)
-        => values.TryGetValue(key, out var value)
-            ? value
-            : throw new FormatException($"Required option '--{key}' was not supplied.");
-
-    private static string? GetOptional(IReadOnlyDictionary<string, string> values, string key)
-        => values.TryGetValue(key, out var value) ? value : null;
 }

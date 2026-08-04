@@ -47,7 +47,6 @@ internal static class FactorizationRequestValidator
         RejectNegative(sieving.BlockSize, "SieveBlockSize");
         RejectNegative(sieving.BucketLargePrimeCutoff, "BucketLargePrimeCutoff");
         RejectNegative(sieving.ResieveLargePrimeCutoff, "ResieveLargePrimeCutoff");
-
         // Cross-field consistency for the two-large-prime bounds is owned by the sieving group.
         sieving.EnsureConsistent();
 

@@ -30,6 +30,7 @@ public class DistributedContractsTests
         Assert.Equal(baseline, Hash(set));
         Assert.NotEqual(baseline, Hash(set with { LargePrimeBound = set.LargePrimeBound + 1 }));
         Assert.NotEqual(baseline, Hash(set with { APrimeWindowSize = set.APrimeWindowSize + 1 }));
+        Assert.NotEqual(baseline, Hash(set with { SmallPrimeVariationBound = 256 }));
         Assert.Equal(baseline, Hash(set with { Parallelism = set.Parallelism + 4 }));
     }
 

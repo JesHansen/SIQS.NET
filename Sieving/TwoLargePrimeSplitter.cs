@@ -11,7 +11,14 @@ namespace Sieving;
 internal static class TwoLargePrimeSplitter
 {
     /// <summary>Which arithmetic actually split a residual, for telemetry attribution.</summary>
-    private enum SplitMethod { Squfof, Rho }
+    private enum SplitMethod { MicroEcm, Squfof, Rho }
+
+    // Production micro-ECM stage-two parameters, tuned on the Experiment 36 wide C110 corpora: this
+    // (B1, B2, curves) point is a clear replay winner across the whole tight-to-wide LP2 range
+    // (1.28x at the tight default up to 3.2x at LP2 = 40x) with a byte-identical accepted-pair set.
+    private const int MicroEcmStage2B1 = 300;
+    private const int MicroEcmStage2B2 = 12_000;
+    private const int MicroEcmStage2Curves = 10;
 
     public static bool TrySplit(
         BigInteger value,
@@ -77,7 +84,9 @@ internal static class TwoLargePrimeSplitter
             return false;
         }
 
-        if (splitter == CofactorSplitterKind.Squfof)
+        // MicroEcmStage2 is 64-bit only; for the rare > 64-bit residual it falls back to rho, exactly
+        // like SqufofRho. The other 64-bit-only splitters cannot handle this path.
+        if (splitter is not (CofactorSplitterKind.SqufofRho or CofactorSplitterKind.MicroEcmStage2))
         {
             return false;
         }
@@ -147,28 +156,49 @@ internal static class TwoLargePrimeSplitter
             return false;
         }
 
-        // Both surviving modes try SQUFOF first, so the fast base-2 primality screen always applies.
+        // Every 64-bit splitter benefits from rejecting probable primes before any factorization.
         if (CofactorPrimality64.IsBase2ProbablePrime(value))
         {
             if (counters is not null) counters.Metrics.TwoLargePrime.ResidualPrime++;
             return false;
         }
 
+        counters?.CompositeResiduals?.Add(value);
+
         var factor = 1UL;
         SplitMethod? splitterUsed = null;
 
-        if (counters is not null) counters.Metrics.Cofactor.SqufofAttempts++;
-        factor = CofactorFactorizer.Squfof64(value);
-        if (factor > 1 && factor < value && value % factor == 0)
+        if (splitter is CofactorSplitterKind.MicroEcmSqufof or CofactorSplitterKind.MicroEcmStage2)
         {
-            splitterUsed = SplitMethod.Squfof;
-        }
-        else
-        {
-            factor = 1;
+            if (counters is not null) counters.Metrics.Cofactor.MicroEcmAttempts++;
+            factor = splitter == CofactorSplitterKind.MicroEcmStage2
+                ? MicroEcm64.TryFactorStage2(value, MicroEcmStage2B1, MicroEcmStage2B2, MicroEcmStage2Curves)
+                : MicroEcm64.TryFactor(value, stage1Bound: 47, curves: 1);
+            if (factor > 1 && factor < value && value % factor == 0)
+            {
+                splitterUsed = SplitMethod.MicroEcm;
+            }
+            else
+            {
+                factor = 1;
+            }
         }
 
-        if (factor <= 1 && splitter == CofactorSplitterKind.SqufofRho)
+        if (factor <= 1)
+        {
+            if (counters is not null) counters.Metrics.Cofactor.SqufofAttempts++;
+            factor = CofactorFactorizer.Squfof64(value);
+            if (factor > 1 && factor < value && value % factor == 0)
+            {
+                splitterUsed = SplitMethod.Squfof;
+            }
+            else
+            {
+                factor = 1;
+            }
+        }
+
+        if (factor <= 1 && splitter is CofactorSplitterKind.SqufofRho or CofactorSplitterKind.MicroEcmStage2)
         {
             if (counters is not null) counters.Metrics.Cofactor.RhoAttempts++;
             factor = CofactorFactorizer.PollardRho64(value);
@@ -199,7 +229,8 @@ internal static class TwoLargePrimeSplitter
         q2 = other;
         if (counters is not null)
         {
-            if (splitterUsed == SplitMethod.Squfof) counters.Metrics.Cofactor.SqufofSuccesses++;
+            if (splitterUsed == SplitMethod.MicroEcm) counters.Metrics.Cofactor.MicroEcmSuccesses++;
+            else if (splitterUsed == SplitMethod.Squfof) counters.Metrics.Cofactor.SqufofSuccesses++;
             else if (splitterUsed == SplitMethod.Rho) counters.Metrics.Cofactor.RhoSuccesses++;
         }
 

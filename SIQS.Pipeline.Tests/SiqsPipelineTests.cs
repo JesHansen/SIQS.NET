@@ -192,7 +192,8 @@ public class SiqsPipelineTests : IDisposable
             "relation_target", "large_prime_bound", "large_prime2_bound", "large_prime2_threshold_bound",
             "cofactor_splitter", "two_large_primes", "sieve_error_margin", "output_batch_size",
             "a_prime_count", "a_prime_window_size", "sieving_parallelism", "sieve_block_size",
-            "bucket_large_prime_cutoff", "resieve_large_prime_cutoff", "trial_sieve_percent",
+            "bucket_large_prime_cutoff", "resieve_large_prime_cutoff", "small_prime_variation_bound",
+            "trial_sieve_percent",
             "linear_algebra_max_dependencies", "linear_algebra_parallelism",
             "continue_square_root_after_factor", "allow_tiny_input_trial_division",
         };
@@ -258,6 +259,7 @@ public class SiqsPipelineTests : IDisposable
         Assert.Equal("auto", job.Parameters["sieving_parallelism"]);
         Assert.Equal("auto", job.Parameters["linear_algebra_parallelism"]);
         Assert.Equal("auto", job.Parameters["sieve_block_size"]);
+        Assert.Equal("auto", job.Parameters["small_prime_variation_bound"]);
     }
 
     [Fact]

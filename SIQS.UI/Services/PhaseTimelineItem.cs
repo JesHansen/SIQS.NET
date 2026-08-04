@@ -23,7 +23,7 @@ public static class PhaseTimelineExtensions
     private static string? Detail(IReadOnlyDictionary<string, string> counters)
     {
         var selected = counters
-            .Where(counter => counter.Key != "elapsed_seconds")
+            .Where(counter => counter.Key != CounterKeys.ElapsedSeconds)
             .Where(counter => counter.Key is "relations" or "usable" or "dependencies" || !string.IsNullOrWhiteSpace(counter.Value))
             .Take(2)
             .Select(counter => $"{counter.Key} {counter.Value}")

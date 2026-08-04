@@ -147,123 +147,163 @@ internal static class CandidateReducer
 
         while (candidates.Count > 1)
         {
-            var counts = new int[factorBaseCount + 1];
-            var firstRows = new int[counts.Length];
-            var secondRows = new int[counts.Length];
-            Array.Fill(firstRows, -1);
-            Array.Fill(secondRows, -1);
-
-            for (var row = 0; row < candidates.Count; row++)
-            {
-                foreach (var column in candidates[row].Parity)
-                {
-                    if (counts[column] == 0)
-                    {
-                        firstRows[column] = row;
-                    }
-                    else if (counts[column] == 1)
-                    {
-                        secondRows[column] = row;
-                    }
-
-                    counts[column]++;
-                }
-            }
-
-            var seenPairs = new HashSet<long>();
-            var proposals = new List<TwoMergeProposal>();
-            for (var column = 0; column < counts.Length; column++)
-            {
-                if (counts[column] != 2)
-                {
-                    continue;
-                }
-
-                var leftRow = Math.Min(firstRows[column], secondRows[column]);
-                var rightRow = Math.Max(firstRows[column], secondRows[column]);
-                var pair = ((long)leftRow << 32) | (uint)rightRow;
-                if (!seenPairs.Add(pair))
-                {
-                    continue;
-                }
-
-                var leftWeight = candidates[leftRow].Parity.Count;
-                var rightWeight = candidates[rightRow].Parity.Count;
-                var mergedWeight = SymmetricDifferenceCount(
-                    candidates[leftRow].Parity.Span,
-                    candidates[rightRow].Parity.Span);
-                var maximumAcceptedWeight = slack is { } maximumIncrease
-                    ? checked(Math.Min(leftWeight, rightWeight) + maximumIncrease)
-                    : int.MaxValue;
-                if (mergedWeight <= maximumAcceptedWeight)
-                {
-                    proposals.Add(new TwoMergeProposal(
-                        leftRow,
-                        rightRow,
-                        mergedWeight,
-                        leftWeight + rightWeight - mergedWeight,
-                        column));
-                }
-            }
-
-            proposals.Sort(static (left, right) =>
-            {
-                var bySavings = right.Savings.CompareTo(left.Savings);
-                if (bySavings != 0)
-                {
-                    return bySavings;
-                }
-
-                var byWeight = left.MergedWeight.CompareTo(right.MergedWeight);
-                return byWeight != 0 ? byWeight : left.Column.CompareTo(right.Column);
-            });
-
-            var claimed = new bool[candidates.Count];
-            var replacements = new Candidate?[candidates.Count];
-            var mergedThisPass = 0;
-            foreach (var proposal in proposals)
-            {
-                if (claimed[proposal.LeftRow] || claimed[proposal.RightRow])
-                {
-                    continue;
-                }
-
-                claimed[proposal.LeftRow] = true;
-                claimed[proposal.RightRow] = true;
-                var parity = SymmetricDifference(
-                    candidates[proposal.LeftRow].Parity.Span,
-                    candidates[proposal.RightRow].Parity.Span);
-                replacements[proposal.LeftRow] = Candidate.Merged(
-                    candidates[proposal.LeftRow],
-                    candidates[proposal.RightRow],
-                    parity,
-                    scaledN);
-                mergedThisPass++;
-            }
-
-            if (mergedThisPass == 0)
+            var (counts, firstRows, secondRows) = BuildColumnIncidence(candidates, factorBaseCount);
+            var proposals = CollectTwoMergeProposals(candidates, counts, firstRows, secondRows, slack);
+            var merged = ApplyTwoMerges(candidates, proposals, scaledN, counters);
+            if (merged is null)
             {
                 return candidates;
             }
 
-            counters.TwoMerges += mergedThisPass;
-            var next = new List<Candidate>(candidates.Count - mergedThisPass);
-            for (var row = 0; row < candidates.Count; row++)
-            {
-                if (replacements[row] is { } replacement)
-                {
-                    next.Add(replacement);
-                }
-                else if (!claimed[row])
-                {
-                    next.Add(candidates[row]);
-                }
-            }
-
-            candidates = next;
+            candidates = merged;
         }
 
         return candidates;
+    }
+
+    /// <summary>
+    /// Records, for each parity column, how many rows carry it and the (up to two) row indices that
+    /// do, so weight-2 columns can be found in one pass. Runs once per merge pass.
+    /// </summary>
+    private static (int[] Counts, int[] FirstRows, int[] SecondRows) BuildColumnIncidence(
+        List<Candidate> candidates, int factorBaseCount)
+    {
+        var counts = new int[factorBaseCount + 1];
+        var firstRows = new int[counts.Length];
+        var secondRows = new int[counts.Length];
+        Array.Fill(firstRows, -1);
+        Array.Fill(secondRows, -1);
+
+        for (var row = 0; row < candidates.Count; row++)
+        {
+            foreach (var column in candidates[row].Parity)
+            {
+                if (counts[column] == 0)
+                {
+                    firstRows[column] = row;
+                }
+                else if (counts[column] == 1)
+                {
+                    secondRows[column] = row;
+                }
+
+                counts[column]++;
+            }
+        }
+
+        return (counts, firstRows, secondRows);
+    }
+
+    /// <summary>
+    /// Builds the accepted weight-2 merge proposals (one per distinct incident row pair, subject to
+    /// the fill <paramref name="slack"/> budget), ordered by descending savings then ascending
+    /// merged weight and column so the pass is deterministic.
+    /// </summary>
+    private static List<TwoMergeProposal> CollectTwoMergeProposals(
+        List<Candidate> candidates, int[] counts, int[] firstRows, int[] secondRows, int? slack)
+    {
+        var seenPairs = new HashSet<long>();
+        var proposals = new List<TwoMergeProposal>();
+        for (var column = 0; column < counts.Length; column++)
+        {
+            if (counts[column] != 2)
+            {
+                continue;
+            }
+
+            var leftRow = Math.Min(firstRows[column], secondRows[column]);
+            var rightRow = Math.Max(firstRows[column], secondRows[column]);
+            var pair = ((long)leftRow << 32) | (uint)rightRow;
+            if (!seenPairs.Add(pair))
+            {
+                continue;
+            }
+
+            var leftWeight = candidates[leftRow].Parity.Count;
+            var rightWeight = candidates[rightRow].Parity.Count;
+            var mergedWeight = SymmetricDifferenceCount(
+                candidates[leftRow].Parity.Span,
+                candidates[rightRow].Parity.Span);
+            var maximumAcceptedWeight = slack is { } maximumIncrease
+                ? checked(Math.Min(leftWeight, rightWeight) + maximumIncrease)
+                : int.MaxValue;
+            if (mergedWeight <= maximumAcceptedWeight)
+            {
+                proposals.Add(new TwoMergeProposal(
+                    leftRow,
+                    rightRow,
+                    mergedWeight,
+                    leftWeight + rightWeight - mergedWeight,
+                    column));
+            }
+        }
+
+        proposals.Sort(static (left, right) =>
+        {
+            var bySavings = right.Savings.CompareTo(left.Savings);
+            if (bySavings != 0)
+            {
+                return bySavings;
+            }
+
+            var byWeight = left.MergedWeight.CompareTo(right.MergedWeight);
+            return byWeight != 0 ? byWeight : left.Column.CompareTo(right.Column);
+        });
+
+        return proposals;
+    }
+
+    /// <summary>
+    /// Applies the proposals greedily — each row may be claimed once — replacing every claimed pair
+    /// with its XOR merge and rebuilding the candidate list. Returns <c>null</c> when no proposal
+    /// could be applied, which ends the merge loop.
+    /// </summary>
+    private static List<Candidate>? ApplyTwoMerges(
+        List<Candidate> candidates, List<TwoMergeProposal> proposals, BigInteger scaledN, FilteringCounters counters)
+    {
+        var claimed = new bool[candidates.Count];
+        var replacements = new Candidate?[candidates.Count];
+        var mergedThisPass = 0;
+        foreach (var proposal in proposals)
+        {
+            if (claimed[proposal.LeftRow] || claimed[proposal.RightRow])
+            {
+                continue;
+            }
+
+            claimed[proposal.LeftRow] = true;
+            claimed[proposal.RightRow] = true;
+            var parity = SymmetricDifference(
+                candidates[proposal.LeftRow].Parity.Span,
+                candidates[proposal.RightRow].Parity.Span);
+            replacements[proposal.LeftRow] = Candidate.Merged(
+                candidates[proposal.LeftRow],
+                candidates[proposal.RightRow],
+                parity,
+                scaledN);
+            mergedThisPass++;
+        }
+
+        if (mergedThisPass == 0)
+        {
+            return null;
+        }
+
+        counters.TwoMerges += mergedThisPass;
+        var next = new List<Candidate>(candidates.Count - mergedThisPass);
+        for (var row = 0; row < candidates.Count; row++)
+        {
+            if (replacements[row] is { } replacement)
+            {
+                next.Add(replacement);
+            }
+            else if (!claimed[row])
+            {
+                next.Add(candidates[row]);
+            }
+        }
+
+        return next;
     }
 
     private static int SymmetricDifferenceCount(ReadOnlySpan<int> left, ReadOnlySpan<int> right)

@@ -71,6 +71,7 @@ public class SievingParametersTests
         Assert.Equal(8_000, parameters.LargePrimeBound);
         Assert.Equal(0, parameters.ErrorMargin);
         Assert.Equal(262_144, parameters.SieveBlockSize);
+        Assert.Equal(0, parameters.SmallPrimeVariationBound);
         Assert.Equal(2, parameters.APrimeCount);
         Assert.Equal(32, parameters.APrimeWindowSize);
         Assert.Equal(992, parameters.PolynomialCount);
@@ -88,6 +89,19 @@ public class SievingParametersTests
         Assert.Equal(7, parameters.APrimeCount);
         Assert.Equal(112, parameters.APrimeWindowSize);
         Assert.Equal(9_828, parameters.RelationTarget);
+    }
+
+    [Fact]
+    public void Small_prime_variation_activates_at_measured_c35_crossover()
+    {
+        Assert.Equal(0, SievingParameters.Default(FactorBaseWithDigitCount(34)).SmallPrimeVariationBound);
+        Assert.Equal(256, SievingParameters.Default(FactorBaseWithDigitCount(35)).SmallPrimeVariationBound);
+        Assert.Equal(256, SievingParameters.Default(FactorBaseWithDigitCount(49)).SmallPrimeVariationBound);
+        Assert.Equal(512, SievingParameters.Default(FactorBaseWithDigitCount(50)).SmallPrimeVariationBound);
+        Assert.Equal(1_024, SievingParameters.Default(FactorBaseWithDigitCount(60)).SmallPrimeVariationBound);
+        Assert.Equal(1_024, SievingParameters.Default(FactorBaseWithDigitCount(99)).SmallPrimeVariationBound);
+        Assert.Equal(768, SievingParameters.Default(FactorBaseWithDigitCount(100)).SmallPrimeVariationBound);
+        Assert.Equal(768, SievingParameters.Default(FactorBaseWithDigitCount(115)).SmallPrimeVariationBound);
     }
 
     [Fact]
@@ -216,7 +230,21 @@ public class SievingParametersTests
         Assert.Equal(0, c84.BucketLargePrimeCutoff);
         Assert.Equal(0, c84.ResieveLargePrimeCutoff);
 
-        foreach (var digits in new[] { 85, 89, 92, 97, 98, 105 })
+        foreach (var digits in new[] { 85, 89, 92, 97, 98, 99 })
+        {
+            var parameters = SievingParameters.Default(FactorBaseWithDigitCount(digits, bound: 4_000_000));
+            Assert.Equal(1_048_576, parameters.BucketLargePrimeCutoff);
+            Assert.Equal(262_144, parameters.ResieveLargePrimeCutoff);
+        }
+
+        foreach (var digits in new[] { 100, 105, 110 })
+        {
+            var parameters = SievingParameters.Default(FactorBaseWithDigitCount(digits, bound: 4_000_000));
+            Assert.Equal(655_360, parameters.BucketLargePrimeCutoff);
+            Assert.Equal(262_144, parameters.ResieveLargePrimeCutoff);
+        }
+
+        foreach (var digits in new[] { 111, 113, 115 })
         {
             var parameters = SievingParameters.Default(FactorBaseWithDigitCount(digits, bound: 4_000_000));
             Assert.Equal(1_048_576, parameters.BucketLargePrimeCutoff);
@@ -225,7 +253,7 @@ public class SievingParametersTests
     }
 
     [Fact]
-    public void C100_uses_end_of_c95_plateau()
+    public void C100_uses_large_input_bucket_retuning()
     {
         var parameters = SievingParameters.Default(FactorBaseWithDigitCount(digits: 100, entryCount: 174_605, bound: 5_000_000));
 
@@ -236,8 +264,8 @@ public class SievingParametersTests
         Assert.Equal(CofactorSplitterKind.Squfof, parameters.CofactorSplitter);
         Assert.Equal(36, parameters.ErrorMargin);
         Assert.Equal(524_288, parameters.SieveBlockSize);
-        Assert.Equal(1_048_576, parameters.BucketLargePrimeCutoff);
-        Assert.Equal(1_048_576, parameters.EffectiveBucketLargePrimeCutoff);
+        Assert.Equal(655_360, parameters.BucketLargePrimeCutoff);
+        Assert.Equal(655_360, parameters.EffectiveBucketLargePrimeCutoff);
         Assert.Equal(262_144, parameters.ResieveLargePrimeCutoff);
         Assert.False(parameters.EnableTwoLargePrimes);
         Assert.Equal(262_144, parameters.EffectiveResieveLargePrimeCutoff);
@@ -259,7 +287,7 @@ public class SievingParametersTests
         Assert.Equal(CofactorSplitterKind.Squfof, parameters.CofactorSplitter);
         Assert.Equal(48, parameters.ErrorMargin);
         Assert.Equal(524_288, parameters.SieveBlockSize);
-        Assert.Equal(1_048_576, parameters.BucketLargePrimeCutoff);
+        Assert.Equal(655_360, parameters.BucketLargePrimeCutoff);
         Assert.Equal(262_144, parameters.ResieveLargePrimeCutoff);
         Assert.False(parameters.EnableTwoLargePrimes);
         Assert.Equal(10, parameters.APrimeCount);
@@ -269,7 +297,7 @@ public class SievingParametersTests
     }
 
     [Fact]
-    public void C110_uses_measured_monotonic_sieving_defaults()
+    public void C110_uses_measured_sieving_defaults()
     {
         var parameters = SievingParameters.Default(FactorBaseWithDigitCount(digits: 110, entryCount: 1_782_307, bound: 60_000_000));
 
@@ -277,10 +305,10 @@ public class SievingParametersTests
         Assert.Equal(1_000_000_000, parameters.LargePrimeBound);
         Assert.Equal(90_000_000, parameters.LargePrime2Bound);
         Assert.Equal(90_000_000, parameters.LargePrime2ThresholdBound);
-        Assert.Equal(CofactorSplitterKind.Squfof, parameters.CofactorSplitter);
+        Assert.Equal(CofactorSplitterKind.MicroEcmStage2, parameters.CofactorSplitter);
         Assert.Equal(48, parameters.ErrorMargin);
         Assert.Equal(524_288, parameters.SieveBlockSize);
-        Assert.Equal(1_048_576, parameters.BucketLargePrimeCutoff);
+        Assert.Equal(655_360, parameters.BucketLargePrimeCutoff);
         Assert.Equal(262_144, parameters.ResieveLargePrimeCutoff);
         Assert.True(parameters.EnableTwoLargePrimes);
         Assert.Equal(10, parameters.APrimeCount);
@@ -339,7 +367,7 @@ public class SievingParametersTests
     }
 
     [Fact]
-    public void Complete_default_profile_is_non_decreasing_per_digit_through_c115()
+    public void Complete_structural_default_profile_is_non_decreasing_per_digit_through_c115()
     {
         var profiles = Enumerable.Range(13, 103)
             .Select(digits => SievingParameters.Default(
@@ -358,7 +386,6 @@ public class SievingParametersTests
             Assert.True(pair.First.APrimeWindowSize <= pair.Second.APrimeWindowSize);
             Assert.True(pair.First.Parallelism <= pair.Second.Parallelism);
             Assert.True(pair.First.SieveBlockSize <= pair.Second.SieveBlockSize);
-            Assert.True(pair.First.BucketLargePrimeCutoff <= pair.Second.BucketLargePrimeCutoff);
             Assert.True(pair.First.ResieveLargePrimeCutoff <= pair.Second.ResieveLargePrimeCutoff);
             Assert.True((pair.First.EnableTwoLargePrimes ? 1 : 0) <= (pair.Second.EnableTwoLargePrimes ? 1 : 0));
             Assert.True(pair.First.LargePrime2Bound <= pair.Second.LargePrime2Bound);

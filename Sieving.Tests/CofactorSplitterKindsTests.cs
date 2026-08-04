@@ -6,6 +6,8 @@ public class CofactorSplitterKindsTests
 {
     [Theory]
     [InlineData(CofactorSplitterKind.Squfof, "squfof")]
+    [InlineData(CofactorSplitterKind.MicroEcmSqufof, "micro-ecm-squfof")]
+    [InlineData(CofactorSplitterKind.MicroEcmStage2, "micro-ecm-stage2")]
     [InlineData(CofactorSplitterKind.SqufofRho, "squfof-rho")]
     public void ToToken_then_TryParse_round_trips(CofactorSplitterKind kind, string expectedToken)
     {
@@ -17,6 +19,8 @@ public class CofactorSplitterKindsTests
 
     [Theory]
     [InlineData("Squfof", CofactorSplitterKind.Squfof)]
+    [InlineData("  MICRO-ECM-SQUFOF  ", CofactorSplitterKind.MicroEcmSqufof)]
+    [InlineData("  MICRO-ECM-STAGE2  ", CofactorSplitterKind.MicroEcmStage2)]
     [InlineData("  SQUFOF-RHO  ", CofactorSplitterKind.SqufofRho)]
     public void TryParse_is_case_insensitive_and_trims(string token, CofactorSplitterKind expected)
     {

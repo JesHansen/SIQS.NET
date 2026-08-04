@@ -27,7 +27,7 @@ internal sealed class FactorBasePhaseRunner
                     new Dictionary<string, string>
                     {
                         ["reason"] = row.Reason ?? string.Empty,
-                        ["input_is_prime"] = "true",
+                        [CounterKeys.InputIsPrime] = CounterFormat.Bool(true),
                     });
             }
 

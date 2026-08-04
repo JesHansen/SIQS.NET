@@ -612,6 +612,7 @@ public class DistributedFactorizationTests : IDisposable
             SieveBlockSize: 1,
             BucketLargePrimeCutoff: 0,
             ResieveLargePrimeCutoff: 0,
+            SmallPrimeVariationBound: 0,
             TrialRawRelationTarget: null,
             EnableTwoLargePrimes: true,
             LargePrime2Bound: 1,

@@ -9,6 +9,12 @@ internal struct RelationCounts
     public int TwoLargePrimePartials;
     public long PolyCount;
     public long Candidates;
+    public long SmallPrimeVariationReports;
+    public long SmallPrimeVariationRejected;
+    public long PreliminaryReports;
+    public long ExactThresholdRejects;
+    public long DirectGatedCandidateBlocks;
+    public long ResievedCandidateBlocks;
     public long Blocks;
     public long Discarded;
 }
@@ -31,6 +37,8 @@ internal struct TwoLargePrimeStats
 /// <summary>Cofactor-factorization engine tallies.</summary>
 internal struct CofactorStats
 {
+    public long MicroEcmAttempts;
+    public long MicroEcmSuccesses;
     public long SqufofAttempts;
     public long SqufofSuccesses;
     public long RhoAttempts;
@@ -43,8 +51,17 @@ internal struct PhaseTicks
     public long Setup;
     public long SieveFill;
     public long SieveInit;
+    public long SieveClear;
+    public long SmallPrimeFill;
+    public long DirectFill;
+    public long BucketScatter;
+    public long BucketReplay;
     public long Scan;
+    public long SmallPrimeVariation;
     public long PolyEval;
+    public long KnownHitCollection;
+    public long DirectKnownHitCollection;
+    public long BucketKnownHitCollection;
     public long TrialDiv;
     public long TrialDivPre;
     public long TrialDivPost;
@@ -58,6 +75,16 @@ internal struct BucketStats
 {
     public long OverflowHits;
     public long SlabBytesPerWorker;
+    public long MaximumHitsPerBucket;
+    public long CapacityPerBucket;
+    public long BinaryCandidateBlocks;
+    public long CandidateMajorBlocks;
+    public long OffsetMapBlocks;
+    public long CandidateHitInspections;
+    public long CandidateVectorGroups;
+    public long CandidateMatchingMasks;
+    public long OffsetMapProbes;
+    public long DecodedPrimeHits;
 }
 
 /// <summary>

@@ -26,6 +26,7 @@ internal static class RunParameterKeys
     public const string SieveBlockSize = "sieve_block_size";
     public const string BucketLargePrimeCutoff = "bucket_large_prime_cutoff";
     public const string ResieveLargePrimeCutoff = "resieve_large_prime_cutoff";
+    public const string SmallPrimeVariationBound = "small_prime_variation_bound";
     public const string TrialSievePercent = "trial_sieve_percent";
     public const string LinearAlgebraMaxDependencies = "linear_algebra_max_dependencies";
     public const string LinearAlgebraParallelism = "linear_algebra_parallelism";
@@ -38,7 +39,8 @@ internal static class RunParameterKeys
         TargetN, FactorBaseBound, Multiplier, SieveHalfInterval, PolynomialCount, RelationTarget,
         LargePrimeBound, LargePrime2Bound, LargePrime2ThresholdBound, CofactorSplitter, TwoLargePrimes,
         SieveErrorMargin, OutputBatchSize, APrimeCount, APrimeWindowSize, SievingParallelism,
-        SieveBlockSize, BucketLargePrimeCutoff, ResieveLargePrimeCutoff, TrialSievePercent,
+        SieveBlockSize, BucketLargePrimeCutoff, ResieveLargePrimeCutoff, SmallPrimeVariationBound,
+        TrialSievePercent,
         LinearAlgebraMaxDependencies, LinearAlgebraParallelism, ContinueSquareRootAfterFactor,
         AllowTinyInputTrialDivision,
     ];

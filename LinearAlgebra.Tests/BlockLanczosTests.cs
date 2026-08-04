@@ -133,4 +133,51 @@ public class BlockLanczosTests
             sequential.Dependencies.Select(d => d.RowIds.ToArray()).ToArray(),
             actual.Dependencies.Select(d => d.RowIds.ToArray()).ToArray());
     }
+
+    [Theory]
+    [InlineData(8_191, false)]
+    [InlineData(8_192, true)]
+    [InlineData(10_000, false)]
+    public void Parallel_recurrence_updates_match_sequential(int length, bool includePreviousBlock)
+    {
+        var random = new Random(0x51A7 + length);
+        var vectors = Enumerable.Range(0, 3).Select(_ => RandomWords(random, length)).ToArray();
+        var matrices = Enumerable.Range(0, 4).Select(_ => RandomWords(random, 64)).ToArray();
+        var expectedVnext = RandomWords(random, length);
+        var actualVnext = expectedVnext.ToArray();
+        var expectedX = RandomWords(random, length);
+        var actualX = expectedX.ToArray();
+        var workspace = new BlockLanczos.VectorWorkspace(length, requestedParallelism: 8);
+
+        Gf2Matrix64.ApplyToBlockVector(vectors[0], matrices[0], expectedVnext);
+        Gf2Matrix64.ApplyToBlockVector(vectors[1], matrices[1], expectedVnext);
+        if (includePreviousBlock)
+        {
+            Gf2Matrix64.ApplyToBlockVector(vectors[2], matrices[2], expectedVnext);
+        }
+
+        Gf2Matrix64.ApplyToBlockVector(vectors[0], matrices[3], expectedX);
+        workspace.ApplyRecurrenceUpdates(
+            vectors[0], matrices[0],
+            vectors[1], matrices[1],
+            includePreviousBlock ? vectors[2] : null,
+            includePreviousBlock ? matrices[2] : null,
+            matrices[3],
+            actualVnext,
+            actualX);
+
+        Assert.Equal(expectedVnext, actualVnext);
+        Assert.Equal(expectedX, actualX);
+    }
+
+    private static ulong[] RandomWords(Random random, int count)
+    {
+        var values = new ulong[count];
+        for (var i = 0; i < values.Length; i++)
+        {
+            values[i] = ((ulong)random.NextInt64() << 1) ^ (ulong)random.Next(2);
+        }
+
+        return values;
+    }
 }

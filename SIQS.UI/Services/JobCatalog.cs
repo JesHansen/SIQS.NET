@@ -1,3 +1,4 @@
+using System.Text.Json;
 using SIQS.Contracts;
 using SIQS.Overlord;
 using SIQS.Pipeline;
@@ -66,7 +67,8 @@ public sealed class JobCatalog
             {
                 snapshot = JobStore.LoadSnapshot(directory);
             }
-            catch
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                or FormatException or JsonException)
             {
                 continue;
             }

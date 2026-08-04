@@ -59,11 +59,29 @@ public class SievingParameterSelectorsTests
     [InlineData(84, 0, 0)]
     [InlineData(85, 1_048_576, 262_144)]
     [InlineData(90, 1_048_576, 262_144)]
+    [InlineData(99, 1_048_576, 262_144)]
+    [InlineData(100, 655_360, 262_144)]
+    [InlineData(110, 655_360, 262_144)]
+    [InlineData(111, 1_048_576, 262_144)]
+    [InlineData(115, 1_048_576, 262_144)]
     public void SelectBucketAndResieveCutoffs_bands(int digits, int expectedBucket, int expectedResieve)
     {
         Assert.Equal(expectedBucket, SievingParameters.SelectBucketLargePrimeCutoff(digits));
         Assert.Equal(expectedResieve, SievingParameters.SelectResieveLargePrimeCutoff(digits));
     }
+
+    [Theory]
+    [InlineData(34, 0)]
+    [InlineData(35, 256)]
+    [InlineData(49, 256)]
+    [InlineData(50, 512)]
+    [InlineData(59, 512)]
+    [InlineData(60, 1_024)]
+    [InlineData(99, 1_024)]
+    [InlineData(100, 768)]
+    [InlineData(115, 768)]
+    public void SelectSmallPrimeVariationBound_bands(int digits, int expected)
+        => Assert.Equal(expected, SievingParameters.SelectSmallPrimeVariationBound(digits));
 
     [Theory]
     [InlineData(13, 1)]
@@ -133,7 +151,7 @@ public class SievingParameterSelectorsTests
     }
 
     [Fact]
-    public void Measured_c13_to_c115_numeric_profile_is_non_decreasing()
+    public void Measured_c13_to_c115_structural_profile_is_non_decreasing()
     {
         var profiles = Enumerable.Range(13, 103)
             .Select(digits =>
@@ -166,7 +184,6 @@ public class SievingParameterSelectorsTests
             Assert.True(pair.First.ErrorMargin <= pair.Second.ErrorMargin);
             Assert.True(pair.First.LargePrime2Bound <= pair.Second.LargePrime2Bound);
             Assert.True(pair.First.LargePrime2Threshold <= pair.Second.LargePrime2Threshold);
-            Assert.True(pair.First.BucketCutoff <= pair.Second.BucketCutoff);
             Assert.True(pair.First.ResieveCutoff <= pair.Second.ResieveCutoff);
             Assert.True(pair.First.PolynomialSupplyMultiplier <= pair.Second.PolynomialSupplyMultiplier);
             Assert.True(pair.First.TwoLargePrimes <= pair.Second.TwoLargePrimes);

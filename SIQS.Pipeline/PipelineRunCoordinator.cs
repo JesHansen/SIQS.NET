@@ -27,10 +27,11 @@ internal sealed class PipelineRunCoordinator
     {
         var currentRequest = initialRequest;
         PhaseResult? squareRootResult = null;
-        for (var i = startIndex; i < PhaseSequence.All.Length; i++)
+        var phaseIndex = startIndex;
+        while (phaseIndex < PhaseSequence.All.Length)
         {
-            var phase = PhaseSequence.All[i];
-            var phaseState = state.PhaseStates[i];
+            var phase = PhaseSequence.All[phaseIndex];
+            var phaseState = state.PhaseStates[phaseIndex];
             if (cancellationToken.IsCancellationRequested)
             {
                 return Cancel(directory, state, phaseState, currentRequest);
@@ -42,7 +43,8 @@ internal sealed class PipelineRunCoordinator
             PhaseResult result;
             try
             {
-                result = await RunPhase(phase, new PhaseContext(state.JobId, directory, currentRequest, events, cancellationToken));
+                result = await RunPhase(phase, new PhaseContext(state.JobId, directory, currentRequest, events, cancellationToken))
+                    .ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -59,8 +61,9 @@ internal sealed class PipelineRunCoordinator
                     return failure!;
                 }
 
+                // Top-up re-sieves for more relations, so restart the loop at the sieving phase.
                 currentRequest = toppedUp!;
-                i = PhaseSequence.IndexOf(SiqsPhase.Sieving) - 1;
+                phaseIndex = PhaseSequence.IndexOf(SiqsPhase.Sieving);
                 continue;
             }
             catch (Exception ex)
@@ -94,7 +97,7 @@ internal sealed class PipelineRunCoordinator
 
             var counters = new Dictionary<string, string>(result.Counters)
             {
-                ["elapsed_seconds"] = stopwatch.Elapsed.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture),
+                [CounterKeys.ElapsedSeconds] = CounterFormat.Seconds(stopwatch.Elapsed.TotalSeconds),
             };
             events.Report(new SiqsProgressEvent(DateTimeOffset.UtcNow, state.JobId, phase,
                 ProgressLevel.Info, "phase completed", null, counters, null));
@@ -102,13 +105,15 @@ internal sealed class PipelineRunCoordinator
             if (phase == SiqsPhase.FactorBase)
             {
                 if (result.Factor is { } early)
-                    return CompleteTrivial(directory, state, i, early, currentRequest);
-                if (result.Counters.TryGetValue("input_is_prime", out var inputIsPrime) && inputIsPrime == "true")
-                    return CompletePrime(directory, state, i, currentRequest);
+                    return CompleteTrivial(directory, state, phaseIndex, early, currentRequest);
+                if (result.Counters.TryGetValue(CounterKeys.InputIsPrime, out var inputIsPrime) && inputIsPrime == "true")
+                    return CompletePrime(directory, state, phaseIndex, currentRequest);
             }
             if (phase == SiqsPhase.Sieving && currentRequest.TrialSievePercent is not null)
-                return CompleteSieveTrial(directory, state, i, currentRequest);
+                return CompleteSieveTrial(directory, state, phaseIndex, currentRequest);
             if (phase == SiqsPhase.SquareRoot) squareRootResult = result;
+
+            phaseIndex++;
         }
 
         return Complete(directory, state, squareRootResult, currentRequest);
@@ -117,7 +122,7 @@ internal sealed class PipelineRunCoordinator
     public FactorizationJobResult BuildStoredResult(JobState state, FactorizationRequest request)
     {
         var phase = state.PhaseStates.ElementAtOrDefault(PhaseSequence.IndexOf(SiqsPhase.SquareRoot));
-        var attempted = (int)ReadLongCounter(phase, "dependencies_attempted");
+        var attempted = (int)ReadLongCounter(phase, CounterKeys.DependenciesAttempted);
         var found = state.Status is JobStatus.CompletedFactorFound or JobStatus.CompletedTrivialFactor;
         return JobResultFactory.BuildResult(state, request, found, attempted);
     }
@@ -144,9 +149,9 @@ internal sealed class PipelineRunCoordinator
         terminalFailure = null;
         PhaseStateMachine.Fail(phaseState, failure.Message, new Dictionary<string, string>
         {
-            ["nonzero_rows"] = failure.NonZeroRows.ToString(CultureInfo.InvariantCulture),
-            ["columns"] = failure.ColumnCount.ToString(CultureInfo.InvariantCulture),
-            ["underdetermined_deficit"] = failure.Deficit.ToString(CultureInfo.InvariantCulture),
+            ["nonzero_rows"] = CounterFormat.Count(failure.NonZeroRows),
+            ["columns"] = CounterFormat.Count(failure.ColumnCount),
+            ["underdetermined_deficit"] = CounterFormat.Count(failure.Deficit),
         });
         TopUpPlan? plan;
         try { plan = _topUp.TryPlan(state, currentRequest, failure); }
@@ -183,9 +188,9 @@ internal sealed class PipelineRunCoordinator
             ProgressLevel.Warning, "matrix underdetermined; topping up relations", null,
             new Dictionary<string, string>
             {
-                ["top_up_round"] = round.Round.ToString(CultureInfo.InvariantCulture),
-                ["underdetermined_deficit"] = round.Deficit.ToString(CultureInfo.InvariantCulture),
-                ["new_relation_target"] = round.NewRelationTarget.ToString(CultureInfo.InvariantCulture),
+                ["top_up_round"] = CounterFormat.Count(round.Round),
+                ["underdetermined_deficit"] = CounterFormat.Count(round.Deficit),
+                ["new_relation_target"] = CounterFormat.Count(round.NewRelationTarget),
             }, null));
         return true;
     }
@@ -250,8 +255,9 @@ internal sealed class PipelineRunCoordinator
     private FactorizationJobResult Complete(string directory, JobState state, PhaseResult? squareRoot,
         FactorizationRequest request)
     {
-        var attempted = squareRoot?.Counters.TryGetValue("dependencies_attempted", out var value) == true
-            && int.TryParse(value, out var parsed) ? parsed : 0;
+        var attempted = squareRoot is null
+            ? 0
+            : (int)CounterFormat.ReadLong(squareRoot.Counters, CounterKeys.DependenciesAttempted);
         if (squareRoot?.Factor is { } factor)
         {
             JobStateMachine.Completed(state, JobStatus.CompletedFactorFound, factor);
@@ -265,8 +271,7 @@ internal sealed class PipelineRunCoordinator
     }
 
     private static long ReadLongCounter(PhaseState? state, string key)
-        => state is not null && state.Counters.TryGetValue(key, out var value)
-            && long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? parsed : 0;
+        => state is null ? 0 : CounterFormat.ReadLong(state.Counters, key);
 
     private static string Now() => JobTimestamp.Now();
 }

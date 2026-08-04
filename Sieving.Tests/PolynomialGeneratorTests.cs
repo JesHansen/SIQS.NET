@@ -233,14 +233,22 @@ public class PolynomialGeneratorTests
 
                 if (member.FlipIndex is { } flipIndex)
                 {
+                    Assert.InRange(member.NormalizationCorrection, -1, 1);
                     var delta = deltas[flipIndex][i];
                     var adjustment = member.FlipDirection > 0 ? -delta : delta;
                     adjustment -= member.NormalizationCorrection;
                     var updated1 = Mod(previousRoots[i].R1 + adjustment, p);
                     var updated2 = Mod(previousRoots[i].R2 + adjustment, p);
 
+                    var boundedUpdated1 = PolynomialSieveWorker.NormalizeUpdatedRoot(
+                        checked((int)previousRoots[i].R1) + adjustment, checked((int)p));
+                    var boundedUpdated2 = PolynomialSieveWorker.NormalizeUpdatedRoot(
+                        checked((int)previousRoots[i].R2) + adjustment, checked((int)p));
+
                     Assert.Equal(direct1, updated1);
                     Assert.Equal(direct2, updated2);
+                    Assert.Equal(direct1, boundedUpdated1);
+                    Assert.Equal(direct2, boundedUpdated2);
 
                     if (engineRoot2[i] >= 0)
                     {

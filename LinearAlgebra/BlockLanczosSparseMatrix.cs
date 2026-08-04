@@ -288,8 +288,38 @@ public sealed class BlockLanczosSparseMatrix
     }
 
     private void MultiplyTransposeSequential(ReadOnlySpan<ulong> y, Span<ulong> x)
+        => TransposeRange(y, x, 0, RelationCount);
+
+    private void MultiplyTransposeParallel(ulong[] y, ulong[] x)
     {
-        for (var relation = 0; relation < RelationCount; relation++)
+        Parallel.For(0, _relationPartitions.Length, _parallelOptions, partitionIndex =>
+        {
+            var range = _relationPartitions[partitionIndex];
+            TransposeRange(y, x, range.Start, range.End);
+        });
+    }
+
+    private void MultiplyTransposePlusDenseSequential(
+        ReadOnlySpan<ulong> y,
+        ReadOnlySpan<ulong> denseImage,
+        Span<ulong> x)
+        => TransposePlusDenseRange(y, denseImage, x, 0, RelationCount);
+
+    private void MultiplyTransposePlusDenseParallel(ulong[] y, ulong[] denseImage, ulong[] x)
+    {
+        Parallel.For(0, _relationPartitions.Length, _parallelOptions, partitionIndex =>
+        {
+            var range = _relationPartitions[partitionIndex];
+            TransposePlusDenseRange(y, denseImage, x, range.Start, range.End);
+        });
+    }
+
+    // The transpose (gather-by-relation) kernel. The sequential path calls it with spans and each
+    // parallel partition calls it with the captured arrays, which convert to spans at the call site
+    // (never captured in the closure), so the inner loop compiles identically for both paths.
+    private void TransposeRange(ReadOnlySpan<ulong> y, Span<ulong> x, int start, int end)
+    {
+        for (var relation = start; relation < end; relation++)
         {
             ulong accum = 0;
             for (var i = _rowOffsets[relation]; i < _rowOffsets[relation + 1]; i++)
@@ -301,30 +331,11 @@ public sealed class BlockLanczosSparseMatrix
         }
     }
 
-    private void MultiplyTransposeParallel(ulong[] y, ulong[] x)
+    // As TransposeRange, but folds each relation's deferred dense-parity columns into the result.
+    private void TransposePlusDenseRange(
+        ReadOnlySpan<ulong> y, ReadOnlySpan<ulong> denseImage, Span<ulong> x, int start, int end)
     {
-        Parallel.For(0, _relationPartitions.Length, _parallelOptions, partitionIndex =>
-        {
-            var range = _relationPartitions[partitionIndex];
-            for (var relation = range.Start; relation < range.End; relation++)
-            {
-                ulong accum = 0;
-                for (var i = _rowOffsets[relation]; i < _rowOffsets[relation + 1]; i++)
-                {
-                    accum ^= y[_columnIndices[i]];
-                }
-
-                x[relation] = accum;
-            }
-        });
-    }
-
-    private void MultiplyTransposePlusDenseSequential(
-        ReadOnlySpan<ulong> y,
-        ReadOnlySpan<ulong> denseImage,
-        Span<ulong> x)
-    {
-        for (var relation = 0; relation < RelationCount; relation++)
+        for (var relation = start; relation < end; relation++)
         {
             ulong accum = 0;
             for (var i = _rowOffsets[relation]; i < _rowOffsets[relation + 1]; i++)
@@ -340,30 +351,6 @@ public sealed class BlockLanczosSparseMatrix
 
             x[relation] = accum;
         }
-    }
-
-    private void MultiplyTransposePlusDenseParallel(ulong[] y, ulong[] denseImage, ulong[] x)
-    {
-        Parallel.For(0, _relationPartitions.Length, _parallelOptions, partitionIndex =>
-        {
-            var range = _relationPartitions[partitionIndex];
-            for (var relation = range.Start; relation < range.End; relation++)
-            {
-                ulong accum = 0;
-                for (var i = _rowOffsets[relation]; i < _rowOffsets[relation + 1]; i++)
-                {
-                    accum ^= y[_columnIndices[i]];
-                }
-
-                var denseMask = _denseRowMasks[relation];
-                if (denseMask != 0)
-                {
-                    accum ^= GatherDenseRows(denseImage, denseMask);
-                }
-
-                x[relation] = accum;
-            }
-        });
     }
 
     private void MultiplySymmetricSequential(ReadOnlySpan<ulong> x, Span<ulong> z, Span<ulong> scratch)
@@ -489,7 +476,17 @@ public sealed class BlockLanczosSparseMatrix
     private void DenseForwardSequential(ReadOnlySpan<ulong> x, Span<ulong> denseImage)
     {
         denseImage.Clear();
-        for (var relation = 0; relation < _denseRowMasks.Length; relation++)
+        DenseForwardRange(x, denseImage, 0, _denseRowMasks.Length);
+    }
+
+    private void DenseForwardPartition(ulong[] x, ulong[] denseScratch, PartitionRange range)
+        => DenseForwardRange(x, denseScratch, range.Start, range.End);
+
+    // The dense-forward (scatter-by-relation) kernel shared by the sequential and per-partition paths;
+    // the caller owns clearing the destination image before the first relation.
+    private void DenseForwardRange(ReadOnlySpan<ulong> x, Span<ulong> denseImage, int start, int end)
+    {
+        for (var relation = start; relation < end; relation++)
         {
             var word = x[relation];
             if (word == 0)
@@ -498,20 +495,6 @@ public sealed class BlockLanczosSparseMatrix
             }
 
             XorDenseRows(denseImage, _denseRowMasks[relation], word);
-        }
-    }
-
-    private void DenseForwardPartition(ulong[] x, ulong[] denseScratch, PartitionRange range)
-    {
-        for (var relation = range.Start; relation < range.End; relation++)
-        {
-            var word = x[relation];
-            if (word == 0)
-            {
-                continue;
-            }
-
-            XorDenseRows(denseScratch, _denseRowMasks[relation], word);
         }
     }
 

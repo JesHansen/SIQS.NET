@@ -47,7 +47,31 @@ public static class SievingParameterResolver
         };
 
         ValidateTwoLargePrimeConfiguration(parameters);
+        ValidateSmallPrimeVariationConfiguration(parameters);
         return parameters;
+    }
+
+    private static void ValidateSmallPrimeVariationConfiguration(SievingParameters parameters)
+    {
+        var bound = parameters.EffectiveSmallPrimeVariationBound;
+        if (bound == 0)
+        {
+            return;
+        }
+
+        if (parameters.EffectiveBucketLargePrimeCutoff > 0 &&
+            bound >= parameters.EffectiveBucketLargePrimeCutoff)
+        {
+            throw new InvalidOperationException(
+                "The small-prime-variation bound must be below the bucket cutoff.");
+        }
+
+        if (parameters.EffectiveResieveLargePrimeCutoff > 0 &&
+            bound >= parameters.EffectiveResieveLargePrimeCutoff)
+        {
+            throw new InvalidOperationException(
+                "The small-prime-variation bound must be below the resieve cutoff.");
+        }
     }
 
     private static void ValidateTwoLargePrimeConfiguration(SievingParameters parameters)

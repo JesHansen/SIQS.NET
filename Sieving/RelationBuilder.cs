@@ -6,16 +6,39 @@ using SIQS.Contracts.Text;
 
 namespace Sieving;
 
+/// <summary>
+/// The per-block state shared by every candidate handed to <see cref="RelationBuilder.Build"/>:
+/// the factor base, the current polynomial, the sieve parameters, the saved root residues, the
+/// direct trial-division limit, and the owning worker. Constant across a block's candidate loop,
+/// so it is built once and passed by <c>in</c>.
+/// </summary>
+internal readonly record struct RelationBuildContext(
+    FactorBaseData Fb,
+    PolynomialCandidate Poly,
+    SievingParameters Parameters,
+    int AIndex,
+    int PolynomialIndex,
+    int[] Root1Residues,
+    int[] Root2Residues,
+    int DirectTrialLimit,
+    PolynomialSieveWorker Worker);
+
 /// <summary>Builds a raw relation by trial-dividing one promising sieve value.</summary>
 internal static class RelationBuilder
 {
     private static readonly BigInteger ULongMax = ulong.MaxValue;
 
     internal static RawRelationRecord? Build(
-        FactorBaseData fb, PolynomialCandidate poly, bool[] isAPrime, SievingParameters parameters,
-        long x, BigInteger value, int sieveIndex, int[] root1Residues, int[] root2Residues,
-        List<int>? knownPrimeHits, int directTrialLimit, PolynomialSieveWorker worker)
+        in RelationBuildContext context, long x, BigInteger value, int sieveIndex, List<int>? knownPrimeHits)
     {
+        var fb = context.Fb;
+        var poly = context.Poly;
+        var parameters = context.Parameters;
+        var root1Residues = context.Root1Residues;
+        var root2Residues = context.Root2Residues;
+        var directTrialLimit = context.DirectTrialLimit;
+        var worker = context.Worker;
+
         var preStart = Stopwatch.GetTimestamp();
         var sign = value.Sign < 0 ? -1 : 1;
         var exponents = worker.ExponentScratch;
@@ -67,7 +90,20 @@ internal static class RelationBuilder
         var relationExponents = new Dictionary<int, int>(exponents);
         var parity = ExponentMapFormat.ParityColumns(relationExponents);
         var t = IntegerMath.Mod(poly.A * x + poly.B, fb.ScaledN);
-        var result = new RawRelationRecord("TEMP", kind, "TEMP", poly.A, poly.B, poly.C, x, t, sign, relationExponents, parity, largePrime)
+        var key = new RelationKey(context.AIndex, context.PolynomialIndex, x);
+        var result = new RawRelationRecord(
+            key.RelationId,
+            kind,
+            key.PolynomialId,
+            poly.A,
+            poly.B,
+            poly.C,
+            x,
+            t,
+            sign,
+            relationExponents,
+            parity,
+            largePrime)
         {
             LargePrimes = largePrimes,
         };

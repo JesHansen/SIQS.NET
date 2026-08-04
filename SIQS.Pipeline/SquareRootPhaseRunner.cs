@@ -32,7 +32,7 @@ internal sealed class SquareRootPhaseRunner
         return PhaseResult.Completed(SiqsPhase.SquareRoot, new[] { "factors.txt" },
             new Dictionary<string, string>
             {
-                ["dependencies_attempted"] = result.Factors.Results.Count.ToString(),
+                [CounterKeys.DependenciesAttempted] = CounterFormat.Count(result.Factors.Results.Count),
                 ["relations_used"] = relationsUsed.ToString(),
                 ["factor_found"] = factor is not null ? "true" : "false",
             }, factor);

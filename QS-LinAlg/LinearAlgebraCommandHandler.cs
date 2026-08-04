@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using LinearAlgebra;
 using SIQS.Contracts;
+using SIQS.Contracts.Cli;
 using SIQS.Contracts.Files;
 
 namespace QS_LinAlg;
@@ -9,7 +10,7 @@ namespace QS_LinAlg;
 /// <summary>Loads, validates, solves, and writes a sparse linear-algebra command.</summary>
 internal sealed class LinearAlgebraCommandHandler
 {
-    public LinearAlgebraCommandResult Execute(CliArguments cli, IProgress<BlockLanczosProgress> progress)
+    public LinearAlgebraCommandResult Execute(CommandLine cli, IProgress<BlockLanczosProgress> progress)
     {
         var metaPath = cli.GetOptional("meta") ?? "matrix_meta.txt";
         var matrixPath = cli.GetOptional("matrix") ?? "filtered_matrix.txt";
@@ -17,8 +18,8 @@ internal sealed class LinearAlgebraCommandHandler
         var outPath = cli.GetOptional("out") ?? "dependencies.txt";
         var telemetryPath = cli.GetOptional("telemetry")
             ?? Path.Combine(Path.GetDirectoryName(outPath) ?? ".", "linalg_telemetry.txt");
-        var maxDependencies = cli.GetOptionalInt("max-dependencies") ?? BlockLanczos.DefaultMaxDependencies;
-        var requestedParallelism = cli.GetOptionalInt("linalg-parallelism") ?? BlockLanczosOptions.DefaultParallelism;
+        var maxDependencies = cli.GetInt("max-dependencies") ?? BlockLanczos.DefaultMaxDependencies;
+        var requestedParallelism = cli.GetInt("linalg-parallelism") ?? BlockLanczosOptions.DefaultParallelism;
         if (requestedParallelism < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(requestedParallelism), "Linear algebra parallelism must be zero or positive.");

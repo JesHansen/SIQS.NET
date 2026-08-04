@@ -12,11 +12,22 @@ public enum CofactorSplitterKind
     /// that handles wider values.
     /// </summary>
     SqufofRho,
+
+    /// <summary>One managed micro-ECM curve followed by SQUFOF when ECM does not split.</summary>
+    MicroEcmSqufof,
+
+    /// <summary>
+    /// Micro-ECM with a full baby-step/giant-step stage two, then SQUFOF, then Pollard's rho as the
+    /// correctness-preserving fallback. Accepts exactly the <see cref="SqufofRho"/> pair set but is
+    /// substantially faster on the larger residuals a wide two-large-prime policy produces
+    /// (Experiment 37). This is the default whenever two-large-primes are enabled.
+    /// </summary>
+    MicroEcmStage2,
 }
 
 /// <summary>
 /// Parses and formats <see cref="CofactorSplitterKind"/> at the CLI and persistence boundaries. Tokens
-/// are lowercase (<c>squfof</c>, <c>squfof-rho</c>) and parsed case-insensitively.
+/// are lowercase and parsed case-insensitively.
 /// </summary>
 public static class CofactorSplitterKinds
 {
@@ -44,6 +55,12 @@ public static class CofactorSplitterKinds
             case "squfof-rho":
                 kind = CofactorSplitterKind.SqufofRho;
                 return true;
+            case "micro-ecm-squfof":
+                kind = CofactorSplitterKind.MicroEcmSqufof;
+                return true;
+            case "micro-ecm-stage2":
+                kind = CofactorSplitterKind.MicroEcmStage2;
+                return true;
             default:
                 kind = Default;
                 return false;
@@ -54,6 +71,8 @@ public static class CofactorSplitterKinds
     {
         CofactorSplitterKind.Squfof => "squfof",
         CofactorSplitterKind.SqufofRho => "squfof-rho",
+        CofactorSplitterKind.MicroEcmSqufof => "micro-ecm-squfof",
+        CofactorSplitterKind.MicroEcmStage2 => "micro-ecm-stage2",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown cofactor splitter kind."),
     };
 }

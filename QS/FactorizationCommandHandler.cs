@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Numerics;
 using QS.Presentation;
 using SIQS.Contracts;
+using SIQS.Contracts.Cli;
 using SIQS.Pipeline;
 
 namespace QS;
@@ -10,10 +11,16 @@ namespace QS;
 internal sealed class FactorizationCommandHandler
 {
     public async Task<FactorizationCommandResult> ExecuteAsync(
-        CliArguments cli,
+        CommandLine cli,
         IRunPresenter presenter,
         CancellationToken cancellationToken)
     {
+        if (cli.GetOptional("small-prime-variation-bound") is not null)
+        {
+            throw new FormatException(
+                "--small-prime-variation-bound was removed; SPV is selected automatically from the target size.");
+        }
+
         var resumeDirectory = cli.GetOptional("resume");
         if (resumeDirectory is "true" or "True" or "TRUE")
         {
@@ -57,7 +64,7 @@ internal sealed class FactorizationCommandHandler
         return new FactorizationCommandResult(target, result, artifactDirectory, trial, watch.Elapsed);
     }
 
-    private static FactorizationRequest BuildRequest(BigInteger n, CliArguments cli, string? runDirectory)
+    private static FactorizationRequest BuildRequest(BigInteger n, CommandLine cli, string? runDirectory)
         => new(n, runDirectory, cli.GetDouble("trial-sieve-percent"))
         {
             FactorBase = new FactorBaseRunOptions
@@ -94,11 +101,12 @@ internal sealed class FactorizationCommandHandler
             },
         };
 
-    private static bool HasResumeParameterOverrides(CliArguments cli) => cli.HasAny(
+    private static bool HasResumeParameterOverrides(CommandLine cli) => cli.HasAny(
         "bound", "multiplier", "sieve-half-interval", "polynomial-count", "relations-target", "large-prime-bound",
         "error-margin", "a-prime-count", "a-prime-window-size", "trial-sieve-percent", "max-dependencies",
         "parallelism", "linalg-parallelism", "sieve-block-size", "bucket-large-prime-cutoff", "resieve-large-prime-cutoff",
-        "two-large-primes", "large-prime2-bound", "large-prime2-threshold-bound", "cofactor-splitter", "continue-after-factor");
+        "two-large-primes", "large-prime2-bound", "large-prime2-threshold-bound",
+        "cofactor-splitter", "continue-after-factor");
 
     private static BigInteger ParseTarget(string text)
         => BigInteger.TryParse(text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var value) && value > 1

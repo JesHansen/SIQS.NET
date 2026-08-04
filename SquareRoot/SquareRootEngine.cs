@@ -122,8 +122,8 @@ public static class SquareRootEngine
             DateTimeOffset.UtcNow, null, SiqsPhase.SquareRoot, ProgressLevel.Info, message, null,
             new Dictionary<string, string>
             {
-                ["dependencies_attempted"] = attempted.ToString(),
-                ["factor_found"] = found ? "true" : "false",
+                [CounterKeys.DependenciesAttempted] = CounterFormat.Count(attempted),
+                ["factor_found"] = CounterFormat.Bool(found),
             },
             null));
     }
