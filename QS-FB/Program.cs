@@ -1,10 +1,23 @@
 using Factorbase;
 using QS_FB;
 using SIQS.Contracts;
+using SIQS.Contracts.Cli;
 using SIQS.Contracts.Files;
+
+const string Usage = "usage: qs-fb --n <TargetN> [--bound <bound>] [--multiplier <k>] [--out factor_base.txt]\n"
+    + "  --n <TargetN>       the number whose factor base to build (required)\n"
+    + "  --bound <bound>     smoothness bound; chosen from the size of N when omitted\n"
+    + "  --multiplier <k>    Knuth-Schroeppel multiplier; chosen automatically when omitted\n"
+    + "  --out <path>        where to write the factor base (default factor_base.txt)";
 
 try
 {
+    if (CommandLine.IsHelpRequested(args))
+    {
+        Console.WriteLine(Usage);
+        return 0;
+    }
+
     var command = FactorBaseCommand.Parse(args);
 
     var progress = new Progress<SiqsProgressEvent>(e => Console.Error.WriteLine($"{Prefix("[factor base]")}{e.Message}"));
@@ -33,7 +46,7 @@ try
 catch (Exception ex) when (ex is FormatException or ArgumentException)
 {
     Console.Error.WriteLine($"error: {ex.Message}");
-    Console.Error.WriteLine("usage: qs-fb --n <TargetN> [--bound <bound>] [--multiplier <k>] [--out factor_base.txt]");
+    Console.Error.WriteLine(Usage);
     return 1;
 }
 

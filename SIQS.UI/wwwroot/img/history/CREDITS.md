@@ -1,9 +1,12 @@
 # Image credits — History section
 
 Images retrieved 2026-07-13. Commons images were fetched via the `Special:FilePath` thumbnail
-service (each is a resized rendition of the original; resizing is the only modification). The
-Pomerance photo is an institutional press photo used with attribution (see its entry) — this app
-is a private LAN deployment; re-evaluate that image before any public distribution.
+service (each is a resized rendition of the original; resizing is the only modification).
+
+Not every image here is under the repository's MIT license. `pomerance.jpg` is a copyrighted
+institutional press photo included with attribution and no license grant, and `lenstra.jpg` is
+copyleft (CC BY-SA 2.0 FR). See [NOTICE.md](../../../../NOTICE.md) at the repository root for what
+that means if you redistribute or deploy this repository.
 
 ## fermat.jpg (960×1120)
 
@@ -35,8 +38,9 @@ is a private LAN deployment; re-evaluate that image before any public distributi
 - **Source:** <https://home.dartmouth.edu/news/2019/04/big-bang-theory-takes-math-notes-carl-pomerance>
   (Dartmouth College news)
 - **Author:** Eli Burakian (photo © Trustees of Dartmouth College, per embedded Exif)
-- **License:** Not free-licensed; institutional press photo used with attribution in a private
-  LAN deployment
+- **License:** Not free-licensed. An institutional press photo used with attribution; no
+  redistribution permission has been obtained from the rights holder. A fork intending to
+  redistribute should remove this file — see [NOTICE.md](../../../../NOTICE.md).
 - **Display credit:** "Photo: Eli Burakian / Dartmouth College, 2019"
 
 ## montgomery.jpg (960×638)

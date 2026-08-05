@@ -24,7 +24,7 @@ body:
         The full command line, including the number being factored and any flags. If the number is
         sensitive, a different composite of the same digit count that reproduces the issue is fine.
       render: shell
-      placeholder: .\QS\bin\Release\net10.0\qs.exe 15347 --parallelism 1
+      placeholder: .\QS\bin\Release\net10.0\qs.exe 48409030287755973455424746676949153939650071115833 --parallelism 1
     validations:
       required: true
 

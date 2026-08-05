@@ -3,7 +3,14 @@ param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
 
-    [switch]$SkipTests
+    [switch]$SkipTests,
+
+    # Sieve clients to publish. The two x64 targets are the default because they are what most
+    # volunteer machines run and because each extra runtime adds a self-contained publish to the
+    # build. The sieve's AVX2 kernels have scalar fallbacks, so the arm64 and macOS targets build
+    # and run — they are simply not published unless asked for.
+    [ValidateSet("win-x64", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64")]
+    [string[]]$Runtimes = @("win-x64", "linux-x64")
 )
 
 Set-StrictMode -Version Latest
@@ -17,6 +24,16 @@ function Invoke-Dotnet {
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet $($Arguments[0]) failed with exit code $LASTEXITCODE."
     }
+}
+
+# The download URL and folder use "windows-x64" where the .NET RID is "win-x64"; every other
+# platform's slug and RID are already the same string. SieveClientCatalog holds the other half of
+# this mapping, and the two must agree or the UI will advertise a file the endpoint cannot find.
+function Get-PlatformSlug {
+    param([Parameter(Mandatory)][string]$RuntimeIdentifier)
+
+    if ($RuntimeIdentifier -eq "win-x64") { return "windows-x64" }
+    return $RuntimeIdentifier
 }
 
 function Publish-SieveClient {
@@ -39,9 +56,10 @@ Invoke-Dotnet @("restore", "SIQS.slnx")
 Invoke-Dotnet @("build", "SIQS.slnx", "-c", $Configuration, "--no-restore")
 
 # The UI endpoint serves these executables directly. Publish them before the UI package so that the
-# development server and deployed application offer matching Windows and Linux client downloads.
-Publish-SieveClient -RuntimeIdentifier "win-x64" -OutputDirectory "SIQS.UI/download/windows-x64"
-Publish-SieveClient -RuntimeIdentifier "linux-x64" -OutputDirectory "SIQS.UI/download/linux-x64"
+# development server and the deployed application offer the same set of client downloads.
+foreach ($runtime in $Runtimes) {
+    Publish-SieveClient -RuntimeIdentifier $runtime -OutputDirectory "SIQS.UI/download/$(Get-PlatformSlug $runtime)"
+}
 
 if (!$SkipTests) {
     Invoke-Dotnet @("test", "--solution", "SIQS.slnx", "-c", $Configuration, "--no-build", "--no-restore")

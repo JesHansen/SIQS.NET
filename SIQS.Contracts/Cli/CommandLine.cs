@@ -51,6 +51,20 @@ public sealed class CommandLine
     /// <summary>The single bare argument, when the syntax allows one.</summary>
     public string? Positional { get; }
 
+    /// <summary>
+    /// Whether <paramref name="args"/> asks for usage text. Every qs tool answers this before parsing,
+    /// so <c>--help</c> never trips option validation (a strict tool would otherwise report a missing
+    /// value for <c>--help</c>, and a lenient one would go on to run with its default inputs).
+    /// </summary>
+    public static bool IsHelpRequested(string[] args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        return args.Any(argument =>
+            argument.Equals("--help", StringComparison.OrdinalIgnoreCase)
+            || argument.Equals("-h", StringComparison.OrdinalIgnoreCase)
+            || argument.Equals("-?", StringComparison.Ordinal));
+    }
+
     public static CommandLine Parse(string[] args, CommandLineSyntax syntax)
     {
         ArgumentNullException.ThrowIfNull(args);

@@ -3,8 +3,10 @@
 @implements IDisposable
 @using System.Numerics
 @using SIQS.Overlord
+@using SIQS.UI.Services
 @inject OverlordService Overlord
 @inject NavigationManager Nav
+@inject SieveClientCatalog Clients
 
 <PageTitle>SIQS Distributed Factorization</PageTitle>
 
@@ -17,8 +19,22 @@
 </header>
 
 <div class="console">
+    @* There is no authentication anywhere in this feature, so the page says so rather than implying
+       an "admin" role that nothing enforces. *@
+    <aside class="security-note" role="note">
+        <p>
+            <strong>This page is unauthenticated.</strong> Anyone who can reach this server can submit a job,
+            lease work, upload relations, and download an executable that other machines will run. There is no
+            login, no TLS by default, and the client download is not signed.
+        </p>
+        <p>
+            Run it on a network where you trust every participant, and put it behind authentication, TLS,
+            and firewalling before exposing it further.
+        </p>
+    </aside>
+
     <section class="panel run-form">
-        <h2>Request a composite (admin)</h2>
+        <h2>Request a composite</h2>
         <label class="field">
             <span>Target N</span>
             <input @bind="_n" placeholder="composite integer" />
@@ -164,15 +180,47 @@
                         </svg>
                         <div>
                             <h2>Participate</h2>
-                            <p>Download the client, then run it in a terminal pointed at this server:</p>
-                            <p><a class="primary" href="/api/dist/client/windows-x64" download>Download sieve client (Windows x64)</a></p>
-                            <pre class="cmd">qs-sieve-client.exe @ServerBase</pre>
-                            <p><a class="primary" href="/api/dist/client/linux-x64" download>Download sieve client (Linux x64)</a></p>
-                            <pre class="cmd">chmod +x qs-sieve-client
-./qs-sieve-client @ServerBase</pre>
+                            @if (Clients.Published is { Count: > 0 } published)
+                            {
+                                <p>Download the client, then run it in a terminal pointed at this server:</p>
+                                @foreach (var client in published)
+                                {
+                                    <p>
+                                        <a class="primary" href="@($"/api/dist/client/{client.Platform}")" download>
+                                            Download sieve client (@client.DisplayName)
+                                        </a>
+                                    </p>
+                                    @if (client.NeedsExecutableBit)
+                                    {
+                                        <pre class="cmd">chmod +x @client.FileName
+./@(client.FileName) @ServerBase</pre>
+                                    }
+                                    else
+                                    {
+                                        <pre class="cmd">@client.FileName @ServerBase</pre>
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                @* The clients are build output, not source. A server started with `dotnet run`
+                                   has none, and a dead download button reads like a broken deployment. *@
+                                <p class="muted">
+                                    No sieve clients have been published on this server, so there is nothing to download
+                                    yet. They are build output rather than source: run <code>./build.ps1</code> (or
+                                    <code>dotnet publish SIQS.UI/SIQS.UI.csproj -c Release</code>) and restart, which
+                                    produces the Windows x64 and Linux x64 workers. Add
+                                    <code>-Runtimes linux-arm64,osx-arm64</code> for other platforms.
+                                </p>
+                                <p class="muted">
+                                    A worker can also be run straight from a checkout without any of this:
+                                </p>
+                                <pre class="cmd">dotnet run -c Release --project QS.SieveClient -- @ServerBase</pre>
+                            }
                             <p class="muted">
                                 The client verifies it agrees with the server on formats, builds the factor base locally, then
-                                repeatedly leases an interval, sieves it, and uploads the relations it finds. No account needed.
+                                repeatedly leases an interval, sieves it, and uploads the relations it finds. No account needed —
+                                and equally, no account is checked: see the warning above.
                             </p>
                         </div>
                     </section>

@@ -1,13 +1,13 @@
 using Filtering;
 using QS_Filter;
 using SIQS.Contracts;
+using SIQS.Contracts.Cli;
 
 const string Usage = "usage: qs-filter --factor-base factor_base.txt --relations relations_*.txt --partials partials_*.txt --out-dir . [--max-partials-per-prime N] [--max-cycle-length N] [--enable-two-merge true|false] [--two-merge-slack N]";
 
 try
 {
-    if (args.Any(argument => argument.Equals("--help", StringComparison.OrdinalIgnoreCase)
-        || argument.Equals("-h", StringComparison.OrdinalIgnoreCase)))
+    if (CommandLine.IsHelpRequested(args))
     {
         Console.WriteLine(Usage);
         return 0;

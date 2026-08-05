@@ -26,7 +26,11 @@ internal static class PhaseText
 
         return phase switch
         {
-            SiqsPhase.FactorBase => $"{Get("factor_base_size")} primes",
+            // No factor base is built when the pre-check settles N outright (a small prime divides it,
+            // it is prime, it is a perfect power). Reporting the reason beats reporting "? primes".
+            SiqsPhase.FactorBase => counters.TryGetValue("factor_base_size", out var size)
+                ? $"{size} primes"
+                : EarlyOutcome(counters),
             SiqsPhase.Sieving => counters.ContainsKey("trial_raw_target")
                 ? $"{Get("raw_relations")}/{Get("trial_raw_target")} raw relations "
                   + $"(full {Get("full_relations")}, partial {Get("partial_relations")})"
@@ -41,4 +45,11 @@ internal static class PhaseText
             _ => string.Empty,
         };
     }
+
+    /// <summary>Describes why the factor-base phase finished without building a factor base.</summary>
+    private static string EarlyOutcome(IReadOnlyDictionary<string, string> counters)
+        => counters.ContainsKey(CounterKeys.InputIsPrime) ? "not needed — input is prime"
+            : counters.GetValueOrDefault("reason") is { Length: > 0 } reason
+                ? $"not needed — {reason.Replace('_', ' ')}"
+                : "not needed";
 }

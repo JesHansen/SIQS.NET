@@ -27,13 +27,14 @@ builder.Services.AddSingleton<RunParameterValidator>();
 builder.Services.AddSingleton<ArtifactBrowser>();
 builder.Services.AddSingleton(new OverlordService(runsRoot, overlordOptions));
 builder.Services.AddSingleton<JobCatalog>();
+builder.Services.AddSingleton<SieveClientCatalog>();
 
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())
 {
-    app.UseExceptionHandler("/Error", createScopeForErrors: true);
+    app.UseExceptionHandler("/error", createScopeForErrors: true);
     // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
     app.UseHsts();
 }

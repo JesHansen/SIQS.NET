@@ -1,0 +1,9 @@
+# Every pull request gets a review request. There is one maintainer today; this file exists so that
+# stays true as contributors arrive, and so the review path is visible rather than assumed.
+*   @JesHansen
+
+# The sieve kernels and the shared file/protocol contracts are the two places where a plausible
+# change can be silently wrong: the first is hand-written AVX2 with scalar fallbacks, the second is
+# the format every stage tool and every distributed worker agrees on.
+/Sieving/            @JesHansen
+/SIQS.Contracts/     @JesHansen

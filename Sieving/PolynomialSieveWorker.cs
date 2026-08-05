@@ -23,6 +23,30 @@ internal readonly record struct PolynomialSieveContext(
 // Thread-local worker: owns the sieve buffer and accumulates relations for one thread.
 //
 // ─────────────────────────────────────────────────────────────────────────────────────────────
+// Why this file is long, and what to know before changing it
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// CONTRIBUTING.md asks for small classes of a handful of screens each. This file does not obey that
+// rule, deliberately. Fill, scan, root update, and bucket scatter look separable, but they are one
+// loop nest over one cache-resident block: they share the pinned `ref byte sieve0`, the per-prime
+// position arrays, and the invariant that a block stays in L1/L2 from fill through scan. Splitting
+// them into collaborating types was not merely untried — the surrounding measurements (see the
+// rejected-optimization list below) consistently found this kernel to be instruction-throughput
+// bound, which is precisely the regime where extra call boundaries and re-derived state cost
+// real time. If you split it, benchmark the whole sieve stage, not the extracted piece.
+//
+// The AVX2 paths here each have a scalar counterpart that must produce identical results:
+//
+//   AVX2 path                            scalar counterpart
+//   ───────────────────────────────────  ────────────────────────────────────────────────
+//   SmallPrimeFillMasks mask add (Fill)  stride loop `for (j = s; j < end; j += p)`
+//   SubtractSaturate/TestZ scan gate     the per-byte `Sieve[ko] < minThreshByte` test
+//   TryUpdateRootsVector                 the `Mod(root + adjustment, p)` branch below it
+//   NormalizeUpdatedRoots                NormalizeUpdatedRoot
+//
+// Sieving.Tests/PolynomialSieveWorkerSimdEquivalenceTests.cs pins every one of those pairs. A
+// divergence in any of them does not crash: it silently loses relations, and the run merely takes
+// longer or fails to converge. Run that file after touching a kernel.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
 // Performance directions that were built or spiked here and measured *negative* — recorded so a
 // future maintainer does not silently retry them expecting a win:
 //   • Vectorising the medium/large *direct* fill with an AVX2 "multi-prime" scatter did not get
@@ -703,8 +727,10 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
         return value;
     }
 
+    // Internal rather than private so PolynomialSieveWorkerSimdEquivalenceTests can pin this against
+    // the scalar branch above it. Visibility only — still static, still aggressively inlined.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool TryUpdateRootsVector(
+    internal static bool TryUpdateRootsVector(
         int start, int[] primes, int[] deltas, int flipDirection, int normalizationCorrection,
         int[] pos1, int[] pos2, int[] root1Res, int[] root2Res, bool storePositions)
     {
@@ -749,8 +775,14 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
         return true;
     }
 
+    /// <summary>
+    /// Eight-lane counterpart of <see cref="NormalizeUpdatedRoot"/>. The two must agree exactly;
+    /// PolynomialSieveWorkerSimdEquivalenceTests asserts it. Both apply a single ±p correction, so
+    /// both require the incoming value to lie in <c>[-p, 2p)</c> — outside that range neither
+    /// returns a residue, and the caller is responsible for the precondition.
+    /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static Vector256<int> NormalizeUpdatedRoots(Vector256<int> values, Vector256<int> primes)
+    internal static Vector256<int> NormalizeUpdatedRoots(Vector256<int> values, Vector256<int> primes)
     {
         var zero = Vector256<int>.Zero;
         var primeMinusOne = Avx2.Subtract(primes, Vector256.Create(1));

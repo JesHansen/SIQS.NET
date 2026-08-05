@@ -20,10 +20,58 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
       - run: dotnet restore SIQS.slnx
       - run: dotnet build SIQS.slnx -c Release --no-restore
       - run: dotnet test --solution SIQS.slnx -c Release --no-build
+
+  publish:
+    # build.ps1 is the supported release workflow and the only thing that produces the binaries
+    # handed to other machines. Self-contained single-file publishing is the most platform-sensitive
+    # step in the repository, so validate it rather than trusting that a passing `dotnet build`
+    # implies a working package. Tests already ran in the matrix above.
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - name: Run the release build script
+        shell: pwsh
+        run: ./build.ps1 -SkipTests
+
+      # A publish that produces nothing still exits 0, so assert the artifacts exist and run.
+      - name: Verify the published clients
+        shell: pwsh
+        run: |
+          $expected = @(
+            'SIQS.UI/download/windows-x64/qs-sieve-client.exe',
+            'SIQS.UI/download/linux-x64/qs-sieve-client',
+            'SIQS.UI/bin/Release/net10.0/publish/SIQS.UI.dll'
+          )
+          $missing = $expected | Where-Object { -not (Test-Path $_) }
+          if ($missing) { throw "Missing published artifacts:`n$($missing -join "`n")" }
+          $expected | ForEach-Object { "{0,12:N0}  {1}" -f (Get-Item $_).Length, $_ }
+
+      - name: Smoke-test the native client
+        shell: pwsh
+        run: |
+          $client = if ($IsWindows) {
+            'SIQS.UI/download/windows-x64/qs-sieve-client.exe'
+          } else {
+            'SIQS.UI/download/linux-x64/qs-sieve-client'
+          }
+          if (-not $IsWindows) { chmod +x $client }
+          # Point it at a closed port: the client must fail its handshake and exit 1, which proves
+          # the single-file bundle actually unpacks and starts. This is what a `dotnet build` cannot
+          # tell us, and it is the failure a worker machine would hit first.
+          & $client http://127.0.0.1:1
+          if ($LASTEXITCODE -ne 1) { throw "Expected exit code 1 from a refused handshake, got $LASTEXITCODE." }

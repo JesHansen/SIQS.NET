@@ -1,0 +1,59 @@
+name: Feature request
+description: Suggest a capability, a diagnostic, or a piece of learning material.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a change aimed at making a run *faster*, use the **Performance proposal** template
+        instead — it asks for the measurements that proposal needs.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: >
+        Describe the situation you ran into, not just the feature. Knowing what you were trying to
+        learn or measure often suggests a simpler answer than the one being asked for.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like it to do?
+      description: If you have a concrete shape in mind — a flag, an endpoint, a page — describe it.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the project?
+      options:
+        - Command-line tools (qs and the stage tools)
+        - Web workbench (SIQS.UI)
+        - Distributed sieving
+        - Sieve School / History / learning material
+        - Pipeline internals or file formats
+        - Documentation
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What did you try instead?
+      description: >
+        Existing options that came close, and why they fell short. Nearly every parameter is already
+        exposed on the command line — see docs/tuning.md.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I would be willing to work on this

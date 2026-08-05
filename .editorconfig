@@ -1,17 +1,30 @@
 # EditorConfig for SIQS.NET — https://editorconfig.org
 #
-# This encodes the conventions already in use across the solution (see AGENTS.md); it does not
+# This encodes the conventions already in use across the solution (see CONTRIBUTING.md); it does not
 # introduce new ones. Style rules are deliberately `suggestion` severity: the build sets
 # TreatWarningsAsErrors, and house style should guide an editor, not fail CI.
 
 root = true
 
 [*]
+# `utf-8` here means UTF-8 without a byte-order mark; `utf-8-bom` would be the other value.
 charset = utf-8
-end_of_line = crlf
 insert_final_newline = true
 trim_trailing_whitespace = true
 indent_style = space
+
+# Line endings are .gitattributes' job, not this file's: `* text=auto` normalizes to LF in the
+# repository and checks out with the platform's native endings, so pinning crlf here would fight
+# the checkout on Linux and macOS. The files that genuinely need a fixed ending (.ps1/.cmd/.bat as
+# CRLF, .sh as LF) are pinned there.
+end_of_line = unset
+
+# Match the endings .gitattributes forces, so an editor writing these files agrees with git.
+[*.{ps1,cmd,bat}]
+end_of_line = crlf
+
+[*.sh]
+end_of_line = lf
 
 # Project/config files use two-space indentation.
 [*.{csproj,props,targets,slnx,json,yml,yaml}]

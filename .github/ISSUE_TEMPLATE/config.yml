@@ -6,6 +6,11 @@ contact_links:
       Please report vulnerabilities privately via a GitHub Security Advisory rather than a public
       issue. See SECURITY.md — note that the distributed sieving service has no authentication and
       is intended for trusted LANs only.
-  - name: Question or idea
-    url: https://github.com/JesHansen/SIQS.NET/discussions
-    about: For questions about the algorithm or the implementation, start a discussion.
+  - name: Project site
+    url: https://siqs.net
+    about: Background on the algorithm, the implementation, and what this project is for.
+  - name: Question about the algorithm or the code
+    url: https://github.com/JesHansen/SIQS.NET/issues/new?labels=question
+    about: >
+      Open a question issue. Discussions are not enabled on this repository, so questions are
+      welcome as issues — they are not treated as bug reports.

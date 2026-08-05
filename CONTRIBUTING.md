@@ -31,9 +31,12 @@ This is a .NET 10 SIQS (Self-Initializing Quadratic Sieve) solution. Core librar
 To run the applications from source while working on them:
 
 ```powershell
-dotnet run --project SIQS.UI/SIQS.UI.csproj
+dotnet run --project SIQS.UI/SIQS.UI.csproj --urls "http://localhost:5078"
 dotnet run --project QS/QS.csproj -- <arguments>
 ```
+
+Every tuning parameter the pipeline has is a command-line option; `qs --help` lists them and
+[docs/tuning.md](docs/tuning.md) explains what each one does and how its default is chosen.
 
 ## Coding style and naming conventions
 
@@ -59,6 +62,23 @@ Algorithmic changes deserve a little extra care:
 Several plausible-sounding optimizations have already been built and measured *negative*. Where that
 happened, the comment beside the current implementation records it — grep the stage you're about to
 change before investing in an idea.
+
+### The sieve kernels
+
+`Sieving/PolynomialSieveWorker.cs` is the one file that openly breaks the "classes are small" rule
+above, and the file header explains why: fill, scan, root update, and bucket scatter are one loop
+nest over one cache-resident block, sharing a pinned buffer reference and the invariant that the
+block stays in L1/L2 throughout. The rule is still the rule; this is a measured exception, not a
+precedent.
+
+It is also the most correctness-critical code in the repository, and its failure mode is quiet. Each
+AVX2 kernel has a scalar counterpart that must agree with it exactly, and when they disagree nothing
+throws — a relation simply never gets found, and the run takes longer or fails to converge.
+`Sieving.Tests/PolynomialSieveWorkerSimdEquivalenceTests.cs` pins every one of those pairs against
+each other. Run it after touching a kernel, and extend it if you add one.
+
+The sieve is also, after 35-plus recorded experiments, close to a defended optimum. That is not a
+reason to leave it alone — but it is a reason to arrive with measurements.
 
 ### How to measure
 

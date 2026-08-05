@@ -7,8 +7,7 @@ const string Usage = "usage: qs-linalg --meta matrix_meta.txt --matrix filtered_
 
 try
 {
-    if (args.Any(argument => argument.Equals("--help", StringComparison.OrdinalIgnoreCase)
-        || argument.Equals("-h", StringComparison.OrdinalIgnoreCase)))
+    if (CommandLine.IsHelpRequested(args))
     {
         Console.WriteLine(Usage);
         return 0;

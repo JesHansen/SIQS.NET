@@ -1,10 +1,26 @@
 using QsSqrt;
 using SIQS.Contracts;
+using SIQS.Contracts.Cli;
 using SIQS.Contracts.Files;
 using SquareRoot;
 
+const string Usage =
+    "usage: qs-sqrt [--factor-base factor_base.txt] [--relations relations_filtered.txt]\n"
+    + "               [--dependencies dependencies.txt] [--out factors.txt] [--continue-after-factor]\n"
+    + "  --factor-base <path>      factor base written by qs-fb (default factor_base.txt)\n"
+    + "  --relations <path>        filtered relations written by qs-filter (default relations_filtered.txt)\n"
+    + "  --dependencies <path>     null-space vectors written by qs-linalg (default dependencies.txt)\n"
+    + "  --out <path>              where to write the factors (default factors.txt)\n"
+    + "  --continue-after-factor   keep trying dependencies after the first non-trivial factor";
+
 try
 {
+    if (CommandLine.IsHelpRequested(args))
+    {
+        Console.WriteLine(Usage);
+        return 0;
+    }
+
     var command = SquareRootCommand.Parse(args);
 
     var factorBase = FactorBaseFile.Parse(File.ReadAllText(command.FactorBasePath));
@@ -46,7 +62,7 @@ try
 catch (Exception ex) when (ex is FormatException or ArgumentException or FileNotFoundException)
 {
     Console.Error.WriteLine($"error: {ex.Message}");
-    Console.Error.WriteLine("usage: qs-sqrt --factor-base factor_base.txt --relations relations_filtered.txt --dependencies dependencies.txt --out factors.txt [--continue-after-factor]");
+    Console.Error.WriteLine(Usage);
     return 1;
 }
 

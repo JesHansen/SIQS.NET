@@ -3,10 +3,14 @@ using Microsoft.AspNetCore.Mvc;
 using SIQS.Contracts.Distributed;
 using SIQS.Overlord;
 using SIQS.Pipeline;
+using SIQS.UI.Services;
 
 namespace SIQS.UI;
 
-/// <summary>Admin request to start a distributed factorization. Optional fields fall back to pipeline defaults.</summary>
+/// <summary>
+/// Request to start a distributed factorization. Optional fields fall back to pipeline defaults.
+/// There is no authentication on this endpoint: anyone who can reach the server can submit a job.
+/// </summary>
 internal sealed record DistSubmitRequest(
     string N,
     long? FactorBaseBound = null,
@@ -60,8 +64,8 @@ internal static class DistributedEndpoints
         group.MapGet("/status", (OverlordService overlord)
             => overlord.Snapshot() is { } snapshot ? Results.Ok(snapshot) : Results.NoContent());
 
-        group.MapGet("/client", (IWebHostEnvironment env) => ClientDownload("windows-x64", env));
-        group.MapGet("/client/{platform}", (string platform, IWebHostEnvironment env) => ClientDownload(platform, env));
+        group.MapGet("/client", (SieveClientCatalog clients) => ClientDownload(SieveClientCatalog.Default.Platform, clients));
+        group.MapGet("/client/{platform}", (string platform, SieveClientCatalog clients) => ClientDownload(platform, clients));
 
         group.MapPost("/submit", (DistSubmitRequest body, OverlordService overlord) =>
         {
@@ -105,26 +109,30 @@ internal static class DistributedEndpoints
         return app;
     }
 
-    private static IResult ClientDownload(string platform, IWebHostEnvironment env)
+    private static IResult ClientDownload(string platform, SieveClientCatalog clients)
     {
-        var artifact = platform switch
+        if (SieveClientCatalog.Find(platform) is not { } client)
         {
-            "windows-x64" => new ClientArtifact("windows-x64", "qs-sieve-client.exe"),
-            "linux-x64" => new ClientArtifact("linux-x64", "qs-sieve-client"),
-            _ => null,
-        };
-
-        if (artifact is null)
-        {
-            return Results.NotFound("Unknown client platform. Available platforms are windows-x64 and linux-x64.");
+            return Results.NotFound(
+                $"Unknown client platform '{platform}'. Known platforms are "
+                + $"{string.Join(", ", SieveClientCatalog.Known.Select(known => known.Platform))}.");
         }
 
-        var path = Path.Combine(env.ContentRootPath, "download", artifact.Platform, artifact.FileName);
-        return File.Exists(path)
-            ? Results.File(path, "application/octet-stream", artifact.FileName)
-            : Results.NotFound(
-                "The client executable has not been published yet. An admin can publish it with: .\\build.ps1");
-    }
+        if (clients.IsPublished(client))
+        {
+            return Results.File(clients.PathTo(client), "application/octet-stream", client.FileName);
+        }
 
-    private sealed record ClientArtifact(string Platform, string FileName);
+        // The clients are build output, not source, so a server started with `dotnet run` has none.
+        // Say so, rather than returning a bare 404 that reads like a broken deployment.
+        var available = clients.Published;
+        return Results.NotFound(
+            $"No {client.DisplayName} client has been published on this server. "
+            + "The sieve clients are build output: run `./build.ps1` (or `dotnet publish "
+            + $"SIQS.UI/SIQS.UI.csproj -c Release`) to produce them, adding `-Runtimes {client.RuntimeIdentifier}` "
+            + "for a platform outside the default set. "
+            + (available.Count > 0
+                ? $"Currently available here: {string.Join(", ", available.Select(published => published.Platform))}."
+                : "This server currently has no published clients at all."));
+    }
 }
