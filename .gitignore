@@ -5,9 +5,16 @@ obj/
 [Rr]elease/
 *.user
 
-# Rider / VS
+# Rider / VS / VS Code
 .idea/
 .vs/
+*.suo
+.vscode/*
+!.vscode/extensions.json
+
+# OS cruft
+.DS_Store
+Thumbs.db
 
 # Test results
 TestResults/

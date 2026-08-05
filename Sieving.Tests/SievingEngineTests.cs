@@ -232,36 +232,6 @@ public class SievingEngineTests
     }
 
     [Fact]
-    public void Disable_vector_scan_runs_scalar_candidate_scan()
-    {
-        var fb = FactorBase("1022117", 1000, 1);
-        var parameters = SmallDeterministicParameters(fb) with
-        {
-            SieveBlockSize = 4_096,
-            DisableVectorScan = true,
-        };
-
-        var result = SievingEngine.Sieve(fb, parameters);
-        var allRelations = result.FullRelations.Concat(result.Partials).ToArray();
-
-        Assert.NotEmpty(allRelations);
-        Assert.All(allRelations, r => AssertRelationValid(r, fb));
-    }
-
-    [Fact]
-    public void Vector_and_scalar_candidate_scan_produce_same_single_thread_relation_output()
-    {
-        var fb = FactorBase("1022117", 1000, 1);
-        var vectorScan = SmallDeterministicParameters(fb) with { SieveBlockSize = 4_096 };
-        var scalarScan = vectorScan with { DisableVectorScan = true };
-
-        var vectorResult = SievingEngine.Sieve(fb, vectorScan);
-        var scalarResult = SievingEngine.Sieve(fb, scalarScan);
-
-        Assert.Equal(AllRelationSignatures(vectorResult), AllRelationSignatures(scalarResult));
-    }
-
-    [Fact]
     public void Small_prime_variation_recovers_valid_relations_and_rejects_provisional_reports()
     {
         var fb = FactorBase("1022117", 1000, 1);
@@ -281,37 +251,6 @@ public class SievingEngineTests
         Assert.True(result.Counters.SmallPrimeVariationReports > result.Counters.Candidates);
         Assert.True(result.Counters.SmallPrimeVariationRejected > 0);
         Assert.True(result.Counters.SmallPrimeVariationCpuMs >= 0);
-    }
-
-    [Fact]
-    public void Vector_and_modulo_gray_root_updates_produce_same_single_thread_relation_output()
-    {
-        var fb = FactorBase("1022117", 1000, 1);
-        var vectorRoots = SmallDeterministicParameters(fb) with
-        {
-            SieveBlockSize = 4_096,
-            RelationTarget = int.MaxValue,
-            PolynomialCount = 32,
-        };
-        var moduloRoots = vectorRoots with { DisableVectorRootUpdate = true };
-
-        var vectorResult = SievingEngine.Sieve(fb, vectorRoots);
-        var moduloResult = SievingEngine.Sieve(fb, moduloRoots);
-
-        Assert.Equal(AllRelationSignatures(vectorResult), AllRelationSignatures(moduloResult));
-    }
-
-    [Fact]
-    public void Banded_and_generic_direct_sieve_produce_same_single_thread_relation_output()
-    {
-        var fb = FactorBase("1022117", 1000, 1);
-        var banded = SmallDeterministicParameters(fb) with { SieveBlockSize = 256 };
-        var generic = banded with { DisableBandedDirectSieve = true };
-
-        var bandedResult = SievingEngine.Sieve(fb, banded);
-        var genericResult = SievingEngine.Sieve(fb, generic);
-
-        Assert.Equal(AllRelationSignatures(genericResult), AllRelationSignatures(bandedResult));
     }
 
     [Fact]
@@ -597,44 +536,6 @@ public class SievingEngineTests
             {
                 BucketLargePrimeCutoff = 401,
                 ResieveLargePrimeCutoff = 101,
-                UseCandidateMajorResieve = true,
-            },
-            baseline with
-            {
-                BucketLargePrimeCutoff = 401,
-                ResieveLargePrimeCutoff = 101,
-                UseFlatCandidateOffsetMap = true,
-            },
-            baseline with
-            {
-                BucketLargePrimeCutoff = 401,
-                ResieveLargePrimeCutoff = 101,
-                UseVectorCandidateMajorResieve = true,
-            },
-            baseline with
-            {
-                BucketLargePrimeCutoff = 401,
-                ResieveLargePrimeCutoff = 101,
-                UseVectorCandidateMajorResieve = true,
-                UseContiguousVectorResieveLoads = true,
-            },
-            baseline with
-            {
-                BucketLargePrimeCutoff = 401,
-                ResieveLargePrimeCutoff = 101,
-                UseRootOnlyBucketState = false,
-            },
-            baseline with
-            {
-                BucketLargePrimeCutoff = 401,
-                ResieveLargePrimeCutoff = 101,
-                UseVectorCandidateMajorResieve = true,
-                UseVectorMediumPrimeTrialDivision = true,
-            },
-            baseline with
-            {
-                BucketLargePrimeCutoff = 401,
-                ResieveLargePrimeCutoff = 101,
                 VectorCandidateMajorBucketMaximumCandidates = 2,
                 FlatCandidateOffsetMapMinimumCandidates = 3,
             },
@@ -642,9 +543,6 @@ public class SievingEngineTests
             {
                 BucketLargePrimeCutoff = 401,
                 ResieveLargePrimeCutoff = 101,
-                UseVectorCandidateMajorResieve = false,
-                UseVectorMediumPrimeTrialDivision = false,
-                UseGeometryAdaptiveBucketMatching = false,
                 VectorCandidateMajorBucketMaximumCandidates = 0,
                 FlatCandidateOffsetMapMinimumCandidates = int.MaxValue,
             },

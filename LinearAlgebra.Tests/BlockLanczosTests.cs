@@ -77,6 +77,85 @@ public class BlockLanczosTests
         Assert.Equal(0, result.LanczosDependencies);
     }
 
+    [Fact]
+    public void Different_seeds_give_different_starting_vectors()
+    {
+        // A stuck run's only recovery is a different starting vector; confirm Seed actually
+        // changes it instead of being dead configuration.
+        var x1 = new ulong[5];
+        var x2 = new ulong[5];
+
+        BlockLanczos.FillInitialVector(x1, retry: 0, seed: BlockLanczosOptions.DefaultSeed);
+        BlockLanczos.FillInitialVector(x2, retry: 0, seed: 0xC0FFEEUL);
+
+        Assert.NotEqual(x1, x2);
+    }
+
+    [Fact]
+    public void Same_seed_and_retry_give_the_same_starting_vector()
+    {
+        var x1 = new ulong[5];
+        var x2 = new ulong[5];
+
+        BlockLanczos.FillInitialVector(x1, retry: 2, seed: 0xC0FFEEUL);
+        BlockLanczos.FillInitialVector(x2, retry: 2, seed: 0xC0FFEEUL);
+
+        Assert.Equal(x1, x2);
+    }
+
+    [Fact]
+    public void Custom_seed_still_solves_correctly()
+    {
+        var rows = new[] { new RelationRow(0, 2), new RelationRow(1, 2), new RelationRow(0, 1) };
+        var options = new BlockLanczosOptions(
+            BlockLanczosOptions.DefaultPostLanczosRows,
+            BlockLanczosOptions.DefaultMinPostLanczosDimension,
+            BlockLanczosOptions.DefaultParallelism,
+            Seed: 0xC0FFEEUL);
+
+        var result = BlockLanczos.Solve(rows, columnCount: 3, options: options);
+
+        AssertAllDependenciesXorToZero(result, rows);
+    }
+
+    [Fact]
+    public void Default_seed_matches_the_documented_constant()
+    {
+        Assert.Equal(0x9E3779B97F4A7C15UL, BlockLanczosOptions.DefaultSeed);
+        Assert.Equal(BlockLanczosOptions.DefaultSeed, new BlockLanczosOptions().Seed);
+    }
+
+    [Theory]
+    [InlineData(0, 64)]
+    [InlineData(1_000, 64)]
+    [InlineData(1_024, 64)]
+    [InlineData(2_048, 128)]
+    [InlineData(16_000, 1_000)]
+    public void Slow_convergence_threshold_is_n_over_16_floored_at_64(int relationCount, int expected)
+    {
+        Assert.Equal(expected, BlockLanczos.SlowConvergenceIterationThreshold(relationCount));
+    }
+
+    [Fact]
+    public void Small_fast_converging_matrix_never_reports_slow_convergence()
+    {
+        var rows = new[] { new RelationRow(0, 2), new RelationRow(1, 2), new RelationRow(0, 1) };
+        var progress = new SynchronousProgress();
+
+        BlockLanczos.Solve(rows, columnCount: 3, progress: progress);
+
+        Assert.DoesNotContain("slow-convergence", progress.Stages);
+    }
+
+    /// <summary>Reports synchronously (unlike <see cref="Progress{T}"/>, which posts via the
+    /// thread pool when there is no captured <see cref="SynchronizationContext"/>).</summary>
+    private sealed class SynchronousProgress : IProgress<BlockLanczosProgress>
+    {
+        public List<string> Stages { get; } = new();
+
+        public void Report(BlockLanczosProgress value) => Stages.Add(value.Stage);
+    }
+
     [Theory]
     [InlineData(1)]
     [InlineData(2)]

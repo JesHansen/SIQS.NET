@@ -3,7 +3,7 @@ using LinearAlgebra;
 using QS_LinAlg;
 using SIQS.Contracts.Cli;
 
-const string Usage = "usage: qs-linalg --meta matrix_meta.txt --matrix filtered_matrix.txt --relations relations_filtered.txt --out dependencies.txt [--telemetry linalg_telemetry.txt] [--max-dependencies N] [--linalg-parallelism N]";
+const string Usage = "usage: qs-linalg --meta matrix_meta.txt --matrix filtered_matrix.txt --relations relations_filtered.txt --out dependencies.txt [--telemetry linalg_telemetry.txt] [--max-dependencies N] [--linalg-parallelism N] [--linalg-seed N]";
 
 try
 {

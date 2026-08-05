@@ -1,10 +1,24 @@
 name: build
 
-on: [push]
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch/PR supersedes the first; don't keep both running.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # The sieve has AVX2 kernels with scalar fallbacks and the tooling is documented on both
+    # platforms, so build and test on each rather than trusting one to cover the other.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4

@@ -101,14 +101,14 @@ internal static class EarlyFactor
             DependencyCount: 0,
             Results:
             [
-                new FactorResultRecord(
-                    DependencyId: "precheck",
-                    Status: FactorizationStatus.FactorFound,
-                    GcdMinus: null,
-                    GcdPlus: null,
-                    Factor1: factor,
-                    Factor2: targetN / factor,
-                    Reason: reason),
+                FactorResultRecord.FactorFound(
+                    dependencyId: "precheck",
+                    targetN: targetN,
+                    gcdMinus: null,
+                    gcdPlus: null,
+                    factor1: factor,
+                    factor2: targetN / factor,
+                    reason: reason),
             ]);
 
     public static FactorsDocument Prime(BigInteger targetN)

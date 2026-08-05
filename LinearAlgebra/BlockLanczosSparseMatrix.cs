@@ -362,7 +362,7 @@ public sealed class BlockLanczosSparseMatrix
         // matrices the solution already carries an isotropic defect that grows with size, so those
         // extra constraints wipe out every recoverable dependency. Folding the dense contribution in
         // here (via the compact per-relation bit masks) keeps the fast sparse kernels while making the
-        // operator the true A^T*A. See Instructions/LinearAlgebra.md (Dense Row Handling).
+        // operator the true A^T*A.
         MultiplyASequential(x, scratch);
 
         // Dense forward pass reads x and must run BEFORE MultiplyTranspose overwrites z, because callers

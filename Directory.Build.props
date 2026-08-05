@@ -7,9 +7,13 @@
     <LangVersion>latest</LangVersion>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <!-- xUnit1051: our tests are short and deterministic; threading a token through every
-         engine call adds noise without value. -->
-    <NoWarn>$(NoWarn);xUnit1051</NoWarn>
+         engine call adds noise without value.
+         CS1591: doc comments are written where they earn their keep, not on every
+         public member; GenerateDocumentationFile is enabled so a malformed <see cref> (CS1574 et al.)
+         still fails the build even though comment coverage itself isn't mandatory. -->
+    <NoWarn>$(NoWarn);xUnit1051;CS1591</NoWarn>
   </PropertyGroup>
 
 </Project>

@@ -23,14 +23,14 @@ internal sealed class DirectSievePlan
         FactorBaseData factorBase, int smallPrimeCount, SievingParameters parameters)
     {
         var bucketStart = factorBase.Count;
-        var bucketCutoff = parameters.EffectiveBucketLargePrimeCutoff;
+        var bucketCutoff = parameters.BucketLargePrimeCutoff;
         if (bucketCutoff > 0)
         {
             bucketStart = LowerBound(factorBase.Primes, smallPrimeCount, factorBase.Count, bucketCutoff);
         }
 
         var resieveStart = bucketStart;
-        var resieveCutoff = parameters.EffectiveResieveLargePrimeCutoff;
+        var resieveCutoff = parameters.ResieveLargePrimeCutoff;
         if (resieveCutoff > 0)
         {
             resieveStart = LowerBound(factorBase.Primes, smallPrimeCount, bucketStart, resieveCutoff);
@@ -89,6 +89,16 @@ internal sealed class DirectSievePlan
 }
 
 /// <summary>Scalar direct-sieve kernels selected by the maximum possible hits per root.</summary>
+// These kernels are deliberately scalar and deliberately modest. Band dispatch (splitting the
+// generic two-root loop into statically bounded 1/2/3/4-hit kernels) was measured as a repeatable
+// but small ~3-5% fill win, and that is the ceiling for this shape of change on this host:
+//   • An AVX2 version of the fill is not merely unwritten but impossible to make pay: .NET/AVX2 has
+//     no byte-granular scatter and Zen 3 has no AVX-512, so each hit still needs an individual scalar
+//     byte write. FillGeneric is kept only as an interleaved correctness/benchmark control.
+//   • Cache-tiling the dense band into L1 windows, software-prefetching the strided writes, hoisting
+//     block-relative write positions, and interleaving two primes for wider ILP were all measured
+//     slower-to-neutral (prefetch as bad as +48%). The fill is instruction-throughput bound on an
+//     L2-resident block, so latency hiding and µop hoisting have nothing to remove.
 internal static class DirectSieveKernel
 {
     public static void FillBanded(

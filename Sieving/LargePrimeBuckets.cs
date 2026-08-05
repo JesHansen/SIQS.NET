@@ -30,6 +30,25 @@ internal readonly record struct LargePrimeBucketLayout(
 internal readonly record struct OverflowBucketHit(SieveOffset Offset, FactorBasePrimeIndex PrimeIndex, SieveLogCredit LogCredit);
 
 /// <summary>Worker-local large-prime buckets with encapsulated packed storage.</summary>
+//
+// The eight-bytes-per-hit layout here (a 32-bit offset|log word plus a parallel 32-bit prime index)
+// is not a first draft — it is where an extended search of the entry format settled, and every
+// attempt to shrink or restructure it was measured and rejected:
+//   • A four-byte "geometry-native" compact entry (and, separately, a single packed 64-bit word of
+//     primeIndex|offset|log) each won at C87, where the slab is cache-resident and the *store count*
+//     dominates, but lost at C110, where the slab is large and *memory-bandwidth* bound so total
+//     bytes decide — eight bytes is eight bytes, while the compact forms fragment the factor base
+//     into hundreds of streams (~25% loss) or widen entries enough to slow replay and halve SIMD
+//     matching width. Two independent implementations reached the same C87-win / C110-loss verdict.
+//   • Fusing the bucket scatter into the AVX2 root update, and cursor/append bucket layouts, lost
+//     locality or hit the same bandwidth wall.
+//   • Deferring the prime index (recovering provenance on demand instead of storing it) exploded
+//     candidate-recovery cost.
+// The reason they all converge: a bucket hit must record offset (~19 bits), factor-base prime index
+// (~21 bits), and a byte log — 48 bits minimum. It is therefore either 8 bytes (no C110 bandwidth
+// win), a sliced layout (fragments into hundreds of streams), or deferred provenance (explodes
+// recovery). C110 bucket scatter is bandwidth bound and the entry cannot shrink below its content,
+// so this phase has no format-level headroom. Do not reopen without a genuinely new representation.
 internal sealed class LargePrimeBuckets
 {
     private readonly bool _assertOnOverflow;
@@ -89,6 +108,11 @@ internal sealed class LargePrimeBuckets
         if (_assertOnOverflow) Debug.Assert(false, "Large-prime bucket overflow; increase bucket capacity margin.");
     }
 
+    // Bucket replay: scattered `sieve[offset] += log` byte writes, the second-largest sieve phase at
+    // C110. It is left as this plain loop by measurement. Manual unrolling was neutral, a common-log
+    // "run" encoding was worse, and prefetching the scattered writes was refuted with the direct
+    // fill. Wider bucket entries also measurably slow this loop, which is one more reason the entry
+    // format above stays at eight bytes. No untested viable mechanism remains for this phase.
     public void PrepareBlock(BucketIndex bucket, ref byte sieve0)
     {
         var baseIndex = bucket.Value * Layout.Capacity.Value;

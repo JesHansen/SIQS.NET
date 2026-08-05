@@ -110,10 +110,14 @@ internal sealed class CandidateHitWorkspace
 /// </summary>
 internal sealed class LargePrimeBucketWorkspace
 {
+    // 110% headroom over the expected mean hit count per bucket; overflow beyond that spills to a
+    // side list regardless (see LargePrimeBuckets), so this only trades allocation size for a lower
+    // spill rate. Not size-adaptive — chosen once and never varied in production.
+    private const int CapacityPermille = 1_100;
+
     private LargePrimeBuckets? _largePrimeBuckets;
     private int _capacityStart = -1;
     private int _capacityBlockSize;
-    private int _capacityPermille;
     private int _capacity;
 
     public LargePrimeBuckets Ensure(int bucketCount, int bucketCapacity, int blockSize)
@@ -129,11 +133,9 @@ internal sealed class LargePrimeBucketWorkspace
         return _largePrimeBuckets;
     }
 
-    public int EstimateCapacity(
-        FactorBaseData fb, int bucketStart, int blockSize, int capacityPermille)
+    public int EstimateCapacity(FactorBaseData fb, int bucketStart, int blockSize)
     {
-        if (_capacityStart == bucketStart && _capacityBlockSize == blockSize
-            && _capacityPermille == capacityPermille)
+        if (_capacityStart == bucketStart && _capacityBlockSize == blockSize)
         {
             return _capacity;
         }
@@ -144,10 +146,9 @@ internal sealed class LargePrimeBucketWorkspace
             expectedHits += 2.0 * blockSize / fb.Primes[i];
         }
 
-        var capacity = (int)Math.Ceiling(expectedHits * capacityPermille / 1_000.0);
+        var capacity = (int)Math.Ceiling(expectedHits * CapacityPermille / 1_000.0);
         _capacityStart = bucketStart;
         _capacityBlockSize = blockSize;
-        _capacityPermille = capacityPermille;
         _capacity = Math.Max(4096, capacity);
         return _capacity;
     }

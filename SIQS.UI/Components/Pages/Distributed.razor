@@ -271,7 +271,7 @@
         }
 
         _dirty = false;
-        InvokeAsync(StateHasChanged);
+        _ = InvokeAsync(StateHasChanged);
     }
 
     public void Dispose()

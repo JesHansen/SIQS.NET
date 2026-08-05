@@ -226,12 +226,13 @@ internal static class PhaseArtifactStore
             var percent = value.Stage == "iteration" && value.TargetDimensions > 0
                 ? Math.Clamp(100.0 * value.DimensionsSolved / value.TargetDimensions, 0.0, 100.0)
                 : (double?)null;
+            var level = value.Stage == "slow-convergence" ? ProgressLevel.Warning : ProgressLevel.Info;
 
             _context.Progress!.Report(new SiqsProgressEvent(
                 DateTimeOffset.UtcNow,
                 _context.JobId,
                 SiqsPhase.LinearAlgebra,
-                ProgressLevel.Info,
+                level,
                 value.Stage,
                 percent,
                 new Dictionary<string, string>

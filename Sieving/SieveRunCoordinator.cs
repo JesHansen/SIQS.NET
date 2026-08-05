@@ -74,7 +74,7 @@ internal static class SieveRunCoordinator
 
         var smallPrimeMasks = SmallPrimeFillMasks.Build(fb, byteLogP);
         var smallPrimeVariation = SmallPrimeVariation.Build(
-            fb, byteLogP, parameters.EffectiveSmallPrimeVariationBound);
+            fb, byteLogP, parameters.SmallPrimeVariationBound);
         var directSievePlan = DirectSievePlan.Build(
             fb, Math.Max(smallPrimeMasks.Count, smallPrimeVariation.Count), parameters);
 

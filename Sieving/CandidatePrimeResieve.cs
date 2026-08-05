@@ -50,97 +50,6 @@ internal static class CandidatePrimeResieve
         }
     }
 
-    /// <summary>
-    /// Candidate-major control arm for the SIMD-resieve experiment. It preserves
-    /// the exact reciprocal predicate while exposing the traversal order that a
-    /// future vector implementation would use.
-    /// </summary>
-    public static void CollectCandidateMajor(
-        FactorBaseData fb, int blockStart, int startPrimeIndex, int endPrimeIndex,
-        int[] root1Res, int[] root2Res, ReadOnlySpan<int> candidateOffsets,
-        List<int>[] primeHits)
-    {
-        for (var candidateIndex = 0; candidateIndex < candidateOffsets.Length; candidateIndex++)
-        {
-            var sieveIndex = blockStart + candidateOffsets[candidateIndex];
-            for (var primeIndex = startPrimeIndex; primeIndex < endPrimeIndex; primeIndex++)
-            {
-                var firstDifference = sieveIndex - root1Res[primeIndex];
-                var hit = firstDifference >= 0
-                    && (ulong)firstDifference * fb.PrimeInverses[primeIndex] <= fb.PrimeDivThresholds[primeIndex];
-                if (!hit)
-                {
-                    var secondRoot = root2Res[primeIndex];
-                    var secondDifference = sieveIndex - secondRoot;
-                    hit = secondRoot >= 0 && secondDifference >= 0
-                        && (ulong)secondDifference * fb.PrimeInverses[primeIndex] <= fb.PrimeDivThresholds[primeIndex];
-                }
-
-                if (hit) primeHits[candidateIndex].Add(primeIndex);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Candidate-major AVX2 control which compares eight primes' block-local
-    /// progression positions at a time.  It avoids reciprocal modular arithmetic
-    /// and is exact for any block size by walking the statically bounded number of
-    /// progression steps in vector lanes.
-    /// </summary>
-    public static void CollectCandidateMajorVector(
-        FactorBaseData fb, int blockStart, int blockSize,
-        int startPrimeIndex, int endPrimeIndex, int[] pos1, int[] pos2,
-        int[] root2Res, ReadOnlySpan<int> candidateOffsets, List<int>[] primeHits)
-    {
-        if (!Avx2.IsSupported)
-        {
-            CollectCandidateMajorFromProgressions(
-                fb, blockStart, startPrimeIndex, endPrimeIndex,
-                pos1, pos2, root2Res, candidateOffsets, primeHits);
-            return;
-        }
-
-        var vectorEnd = startPrimeIndex + (endPrimeIndex - startPrimeIndex) / 8 * 8;
-        var blockStartVector = Vector256.Create(blockStart);
-        var negativeOne = Vector256.Create(-1);
-        for (var candidateIndex = 0; candidateIndex < candidateOffsets.Length; candidateIndex++)
-        {
-            var candidate = Vector256.Create(candidateOffsets[candidateIndex]);
-            var primeIndex = startPrimeIndex;
-            for (; primeIndex < vectorEnd; primeIndex += 8)
-            {
-                var primes = CreatePrimeVector(fb, primeIndex);
-                var first = CreateVector(pos1, primeIndex) - blockStartVector - primes;
-                var second = CreateVector(pos2, primeIndex) - blockStartVector - primes;
-                var hasSecond = Avx2.CompareGreaterThan(
-                    CreateVector(root2Res, primeIndex), negativeOne);
-                var matches = Vector256<int>.Zero;
-                var steps = (blockSize + (int)fb.Primes[primeIndex] - 1)
-                    / (int)fb.Primes[primeIndex] + 1;
-                for (var step = 0; step < steps; step++)
-                {
-                    matches = Avx2.Or(matches, Avx2.CompareEqual(first, candidate));
-                    matches = Avx2.Or(matches,
-                        Avx2.And(Avx2.CompareEqual(second, candidate), hasSecond));
-                    first = Avx2.Subtract(first, primes);
-                    second = Avx2.Subtract(second, primes);
-                }
-
-                var mask = Avx.MoveMask(matches.AsSingle());
-                while (mask != 0)
-                {
-                    var lane = System.Numerics.BitOperations.TrailingZeroCount((uint)mask);
-                    primeHits[candidateIndex].Add(primeIndex + lane);
-                    mask &= mask - 1;
-                }
-            }
-
-            CollectCandidateProgressionsScalar(
-                fb, blockStart, primeIndex, endPrimeIndex, pos1, pos2,
-                root2Res, candidateOffsets[candidateIndex], primeHits[candidateIndex]);
-        }
-    }
-
     private static void CollectCandidateMajorFromProgressions(
         FactorBaseData fb, int blockStart, int startPrimeIndex, int endPrimeIndex,
         int[] pos1, int[] pos2, int[] root2Res, ReadOnlySpan<int> candidateOffsets,
@@ -176,18 +85,6 @@ internal static class CandidatePrimeResieve
         return false;
     }
 
-    private static Vector256<int> CreatePrimeVector(FactorBaseData fb, int index)
-        => Vector256.Create(
-            (int)fb.Primes[index], (int)fb.Primes[index + 1],
-            (int)fb.Primes[index + 2], (int)fb.Primes[index + 3],
-            (int)fb.Primes[index + 4], (int)fb.Primes[index + 5],
-            (int)fb.Primes[index + 6], (int)fb.Primes[index + 7]);
-
-    private static Vector256<int> CreateVector(int[] values, int index)
-        => Vector256.Create(
-            values[index], values[index + 1], values[index + 2], values[index + 3],
-            values[index + 4], values[index + 5], values[index + 6], values[index + 7]);
-
     public static void CollectWithOffsetMap(
         FactorBaseData fb, int blockStart, int startPrimeIndex, int endPrimeIndex,
         bool[] isAPrime, int[] pos1, int[] pos2, int[] root2Res,
@@ -206,9 +103,10 @@ internal static class CandidatePrimeResieve
     }
 
     /// <summary>
-    /// Same progression kernel as <see cref="CollectCandidateMajorVector"/>, with contiguous
-    /// unaligned vector loads from the compact prime and root arrays instead of constructing each
-    /// vector from eight scalar element reads.
+    /// Candidate-major AVX2 progression walk that compares eight primes' block-local progression
+    /// positions at a time, using contiguous unaligned vector loads from the compact prime and root
+    /// arrays. Exact for any block size: it walks the statically bounded number of progression steps
+    /// in vector lanes rather than using reciprocal modular arithmetic.
     /// </summary>
     public static void CollectCandidateMajorVectorContiguous(
         FactorBaseData fb, int blockStart, int blockSize,

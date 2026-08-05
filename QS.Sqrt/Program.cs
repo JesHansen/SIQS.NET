@@ -25,6 +25,15 @@ try
     if (result.Factor1 is { } f1 && result.Factor2 is { } f2)
     {
         Console.WriteLine($"{Prefix("[square root]")}factor found: {f1} * {f2} = {f1 * f2}");
+
+        var row = result.Factors.Results.First(r => r.Status == FactorizationStatus.FactorFound);
+        if (row.Factor1IsComposite == true || row.Factor2IsComposite == true)
+        {
+            var which = row.Factor1IsComposite == true && row.Factor2IsComposite == true
+                ? "both factors are"
+                : row.Factor1IsComposite == true ? "factor1 is" : "factor2 is";
+            Console.WriteLine($"{Prefix("[square root]")}note: {which} composite; N has more than two prime factors, so at least one side needs further factoring.");
+        }
     }
     else
     {

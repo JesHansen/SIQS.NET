@@ -265,10 +265,10 @@ public class SievingParametersTests
         Assert.Equal(36, parameters.ErrorMargin);
         Assert.Equal(524_288, parameters.SieveBlockSize);
         Assert.Equal(655_360, parameters.BucketLargePrimeCutoff);
-        Assert.Equal(655_360, parameters.EffectiveBucketLargePrimeCutoff);
+        Assert.Equal(655_360, parameters.BucketLargePrimeCutoff);
         Assert.Equal(262_144, parameters.ResieveLargePrimeCutoff);
         Assert.False(parameters.EnableTwoLargePrimes);
-        Assert.Equal(262_144, parameters.EffectiveResieveLargePrimeCutoff);
+        Assert.Equal(262_144, parameters.ResieveLargePrimeCutoff);
         Assert.Equal(9, parameters.APrimeCount);
         Assert.Equal(144, parameters.APrimeWindowSize);
         Assert.Equal(184_605, parameters.RelationTarget);

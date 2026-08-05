@@ -20,6 +20,13 @@ public sealed record FactorsDocument
     public BigInteger TargetN { get; }
     public BigInteger Multiplier { get; }
     public BigInteger ScaledN { get; }
+
+    /// <summary>
+    /// The number of dependencies <em>attempted</em> (i.e. <c>Results.Count</c>), not the number
+    /// available in <c>dependencies.txt</c>. With the SquareRoot phase's default
+    /// <c>ContinueAfterFactor = false</c>, the run stops at the first factor found, so this is
+    /// normally smaller than the total dependency count.
+    /// </summary>
     public int DependencyCount { get; }
     public IReadOnlyList<FactorResultRecord> Results { get; }
 }
@@ -31,7 +38,7 @@ public sealed record FactorsDocument
 /// </summary>
 public static class FactorsFile
 {
-    private const string ColumnsValue = "dependency_id,status,gcd_minus,gcd_plus,factor1,factor2,reason";
+    private const string ColumnsValue = "dependency_id,status,gcd_minus,gcd_plus,factor1,factor2,reason,factor1_composite,factor2_composite";
 
     /// <summary>Serializes a factors document to its full UTF-8 text form.</summary>
     public static string Write(FactorsDocument document)
@@ -56,6 +63,8 @@ public static class FactorsFile
                 OptionalDec(r.Factor1),
                 OptionalDec(r.Factor2),
                 r.Reason ?? string.Empty,
+                OptionalBool(r.Factor1IsComposite),
+                OptionalBool(r.Factor2IsComposite),
             })).Append('\n');
         }
 
@@ -95,7 +104,9 @@ public static class FactorsFile
                 GcdPlus: OptionalParse(fields[3]),
                 Factor1: OptionalParse(fields[4]),
                 Factor2: OptionalParse(fields[5]),
-                Reason: fields.Count > 6 && fields[6].Length > 0 ? fields[6] : null));
+                Reason: fields.Count > 6 && fields[6].Length > 0 ? fields[6] : null,
+                Factor1IsComposite: fields.Count > 7 ? OptionalBoolParse(fields[7]) : null,
+                Factor2IsComposite: fields.Count > 8 ? OptionalBoolParse(fields[8]) : null));
         }
 
         return new FactorsDocument(
@@ -113,6 +124,12 @@ public static class FactorsFile
 
     private static BigInteger? OptionalParse(string field)
         => field.Length == 0 ? null : BigInteger.Parse(field, CultureInfo.InvariantCulture);
+
+    private static string OptionalBool(bool? value)
+        => value.HasValue ? CounterFormat.Bool(value.Value) : string.Empty;
+
+    private static bool? OptionalBoolParse(string field)
+        => field.Length == 0 ? null : field == "true";
 
     private static string Require(IReadOnlyDictionary<string, string> meta, string key)
         => meta.TryGetValue(key, out var value)

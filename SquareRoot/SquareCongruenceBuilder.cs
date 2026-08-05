@@ -49,6 +49,11 @@ internal static class SquareCongruenceBuilder
             return Invalid("unknown_factor_base_column", out congruence, out invalidReason);
         }
 
+        if (BigInteger.ModPow(x, 2, targetN) != BigInteger.ModPow(y, 2, targetN))
+        {
+            return Invalid("congruence_not_square", out congruence, out invalidReason);
+        }
+
         congruence = new SquareCongruence(x, y);
         invalidReason = null;
         return true;

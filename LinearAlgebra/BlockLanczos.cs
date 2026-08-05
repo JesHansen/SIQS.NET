@@ -92,7 +92,7 @@ public static class BlockLanczos
                 0,
                 matrix.SparseParityColumnCount,
                 TimeSpan.Zero));
-            if (TrySolveOnce(matrix, retry, runWatch, progress, out var candidateBlock, out var dimensionsSolved))
+            if (TrySolveOnce(matrix, retry, options.Seed, runWatch, progress, out var candidateBlock, out var dimensionsSolved))
             {
                 runWatch.Stop();
                 runMilliseconds.Add(runWatch.ElapsedMilliseconds);
@@ -182,6 +182,7 @@ public static class BlockLanczos
     private static bool TrySolveOnce(
         BlockLanczosSparseMatrix matrix,
         int retry,
+        ulong seed,
         System.Diagnostics.Stopwatch runWatch,
         IProgress<BlockLanczosProgress>? progress,
         out ulong[] candidateBlock,
@@ -201,7 +202,7 @@ public static class BlockLanczos
         var dim1 = 64;
         var mask1 = AllBits;
 
-        FillInitialVector(x, retry);
+        FillInitialVector(x, retry, seed);
         Array.Copy(x, v[0], n);
         matrix.MultiplySymmetric(v[0], v[0], multiplyScratch);
         Array.Copy(v[0], v0, n);
@@ -214,7 +215,10 @@ public static class BlockLanczos
         var dim0 = 0;
         var lastProgressMilliseconds = 0L;
         var run = retry + 1;
-        for (var iter = 1; iter <= Math.Max(32, n + 128); iter++)
+        var iterationBound = Math.Max(32, n + 128);
+        var slowConvergenceIteration = SlowConvergenceIterationThreshold(n);
+        var reportedSlowConvergence = false;
+        for (var iter = 1; iter <= iterationBound; iter++)
         {
             matrix.MultiplySymmetric(v[0], vnext, multiplyScratch);
             vtAv[0] = TransposeMultiply(v[0], vnext, vectorWorkspace);
@@ -246,6 +250,18 @@ public static class BlockLanczos
                 lastProgressMilliseconds = elapsedMilliseconds;
                 progress.Report(new BlockLanczosProgress(
                     "iteration",
+                    run,
+                    iter,
+                    dimensionsSolved,
+                    matrix.SparseParityColumnCount,
+                    runWatch.Elapsed));
+            }
+
+            if (!reportedSlowConvergence && iter >= slowConvergenceIteration)
+            {
+                reportedSlowConvergence = true;
+                progress?.Report(new BlockLanczosProgress(
+                    "slow-convergence",
                     run,
                     iter,
                     dimensionsSolved,
@@ -340,9 +356,17 @@ public static class BlockLanczos
         return true;
     }
 
-    private static void FillInitialVector(ulong[] x, int retry)
+    /// <summary>
+    /// Block Lanczos converges in roughly n/64 iterations, so reaching n/16 (4x that) without
+    /// finishing is worth flagging: it distinguishes a run that's merely converging slowly from
+    /// one that's spinning toward the much larger iteration-count safety valve. The 64-iteration
+    /// floor keeps this meaningful for small matrices, where n/16 alone would be noise.
+    /// </summary>
+    internal static int SlowConvergenceIterationThreshold(int relationCount) => Math.Max(64, relationCount / 16);
+
+    internal static void FillInitialVector(ulong[] x, int retry, ulong seed)
     {
-        var state = 0x9E3779B97F4A7C15UL ^ ((ulong)retry * 0xD1B54A32D192ED03UL) ^ (ulong)x.Length;
+        var state = seed ^ ((ulong)retry * 0xD1B54A32D192ED03UL) ^ (ulong)x.Length;
         for (var i = 0; i < x.Length; i++)
         {
             x[i] = SplitMix64(ref state);

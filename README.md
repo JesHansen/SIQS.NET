@@ -25,25 +25,54 @@ The project is designed to make the algorithm visible without making it toy-size
 ### Prerequisites
 
 - .NET 10 SDK
-- PowerShell, if using the repository build script on Windows
+- PowerShell 7+, if using the repository build script (`build.ps1`) — it is cross-platform
 - A modern browser for the web UI
 
-Clone the repository, restore packages, and start the UI:
+Clone the repository and build once in Release:
 
 ```powershell
-dotnet restore SIQS.slnx
-dotnet run --project SIQS.UI/SIQS.UI.csproj --urls "http://0.0.0.0:5078"
+git clone https://github.com/JesHansen/SIQS.NET.git
+cd SIQS.NET
+dotnet build -c Release SIQS.slnx
 ```
 
-Open `http://localhost:5078` in a browser. Binding to `0.0.0.0` makes the service reachable on the machine's network interfaces; use a firewall and a trusted network when doing that.
-
-To run a small local factorization from the command line:
+That build produces a `qs` binary. Point it straight at the number you want factored — there's no need to `dotnet run` the project again for each factorization:
 
 ```powershell
-dotnet run --project QS/QS.csproj -- 15347
+.\QS\bin\Release\net10.0\qs.exe 15347
 ```
 
-The final argument is the integer to factor. Press `Ctrl+C` to cancel a running command-line job cleanly.
+On Linux or macOS the same binary is `./QS/bin/Release/net10.0/qs`. The examples below are written
+for PowerShell because that is where most of the development happens, but nothing in the solution
+is Windows-only: CI builds and tests on both Linux and Windows, `build.ps1` runs under PowerShell 7
+(`pwsh ./build.ps1`) on any platform, and `dotnet run --project ...` works everywhere.
+
+The final argument is the integer to factor. Press `Ctrl+C` to cancel a running command-line job cleanly. Useful flags:
+
+- `--quiet` prints only the factor product to stdout, for piping `qs` into a script or another tool.
+- `--debug` restores the full per-phase counter dump.
+- `--resume <run-dir>` resumes a canceled run from its saved artifacts (see `runs/` below) instead of starting over.
+- `--parallelism 1` forces single-threaded execution, for byte-for-byte reproducible run artifacts.
+
+`qs` also reads the target from stdin when no number is given, so it composes with other command-line tools, e.g. generating a random 55-digit semiprime with the included generator and factoring it in one line:
+
+```powershell
+.\CompositeGenerator\bin\Release\net10.0\CompositeGenerator.exe 55 | .\QS\bin\Release\net10.0\qs.exe
+```
+
+To use the web workbench instead, run it directly from source (no separate build step needed for iterating on it):
+
+```powershell
+dotnet run -c Release --project SIQS.UI/SIQS.UI.csproj --urls "http://localhost:5078"
+```
+
+Open `http://localhost:5078` in a browser. Binding to `0.0.0.0` instead of `localhost` makes the service reachable on the machine's network interfaces; use a firewall and a trusted network when doing that.
+
+Verify the build with the test suite at any point:
+
+```powershell
+dotnet test --solution SIQS.slnx
+```
 
 ## The web workbench
 
@@ -259,6 +288,9 @@ The solution is deliberately divided by algorithmic responsibility.
 | `QS.SieveClient/` | Cross-platform distributed sieving worker. |
 | `QS/` | Main command-line factorization tool. |
 | `QS-FB/`, `QS.Sieve/`, `QS-Filter/`, `QS-LinAlg/`, `QS.Sqrt/` | Focused command-line entry points for pipeline stages. |
+| `CompositeGenerator/` | Generates random semiprimes of a requested decimal size, for feeding `qs`. |
+| `SIQS.Benchmarks/` | BenchmarkDotNet suites and measurement tools for individual kernels. |
+| `SIQS.PerformanceSpy/` | End-to-end timing sweep across digit sizes, for catching regressions. |
 | `*.Tests/` | Unit and integration tests for the corresponding modules. |
 
 The focused stage tools are useful when studying a saved artifact, isolating a performance question, or experimenting with one part of the pipeline without running a complete factorization.
@@ -277,16 +309,9 @@ For long-running or distributed use:
 
 ## Contributing
 
-Contributions are welcome: correctness improvements, better diagnostics, performance measurements, tests, UI polish, documentation, and new learning material all help.
+Contributions are welcome: correctness improvements, better diagnostics, performance measurements, tests, UI polish, documentation, and new learning material all help. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get started, coding style, and pull request expectations.
 
-Before opening a change, build and test the solution:
-
-```powershell
-dotnet build SIQS.slnx
-dotnet test SIQS.slnx
-```
-
-Algorithmic changes deserve a little extra care. A faster-looking implementation is only an improvement when it is measured and keeps the mathematical invariants and serialized run formats intact.
+Participation is governed by the [Contributor Covenant](CODE_OF_CONDUCT.md). SIQS.NET is released under the [MIT License](LICENSE); to report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## Acknowledgements
 

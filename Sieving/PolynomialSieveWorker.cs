@@ -21,6 +21,28 @@ internal readonly record struct PolynomialSieveContext(
     SmallPrimeVariation SmallPrimeVariation, DirectSievePlan DirectSievePlan);
 
 // Thread-local worker: owns the sieve buffer and accumulates relations for one thread.
+//
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// Performance directions that were built or spiked here and measured *negative* — recorded so a
+// future maintainer does not silently retry them expecting a win:
+//   • Vectorising the medium/large *direct* fill with an AVX2 "multi-prime" scatter did not get
+//     faster: .NET/AVX2 exposes no byte-granular scatter and Zen 3 has no AVX-512, so every hit
+//     still costs one scalar byte write and the vector setup is pure overhead. Only the small-prime
+//     fill below benefits from SIMD, because there a single phase mask covers a whole 32-byte chunk.
+//   • Cache-tiling the dense fill into L1-sized windows, software-prefetching its strided write
+//     targets, and hoisting block-relative write positions / interleaving two primes for more scalar
+//     ILP were each measured and came back slower-to-neutral (up to +48% with prefetch). The block is
+//     already L2-resident, Zen 3 hides the access latency, and RyuJIT plus the out-of-order engine
+//     already extract the address arithmetic and two-root ILP. The direct fill is instruction-
+//     throughput bound, not latency bound.
+//   • Replacing the saturating-subtract scan skip test with a threshold-biased high-bit predicate, or
+//     compacting surviving chunks with a movemask pass, gave no material gain: the predicate is
+//     mismatched to the additive byte scale and the scan is already under ~2% of sieve CPU.
+//   • Putting a cache-resident bit/Bloom pre-filter in front of bucket-candidate matching was
+//     rejected decisively: it rejects too few of the already-sparse candidate sets to repay its
+//     construction and hashing, and roughly doubled known-hit CPU at C110.
+// The per-kernel notes below give the specific mechanism at each site.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
 internal sealed class PolynomialSieveWorker(int sieveBufferLength)
 {
     private const int RootCrossingScanLength = 32;
@@ -76,12 +98,10 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
         var bucketStart = directSievePlan.BucketStart;
 
         // Root/position arrays are grown once and reused across polynomials so Gray-code neighbours
-        // keep the previous saved residues (see SieveRootState).
-        _roots.EnsureCapacity(
-            fb.Count,
-            parameters.UseRootOnlyBucketState
-                ? Math.Min(fb.Count, bucketStart + Vector256<int>.Count)
-                : fb.Count);
+        // keep the previous saved residues (see SieveRootState). Only the directly-sieved band
+        // (below bucketStart) needs its own pos1/pos2 entries; bucket-band primes are tracked purely
+        // through the root residue arrays below.
+        _roots.EnsureCapacity(fb.Count, Math.Min(fb.Count, bucketStart + Vector256<int>.Count));
         var pos1 = _roots.Pos1;
         var pos2 = _roots.Pos2;
         var root1Res = _roots.Root1Res;
@@ -95,8 +115,7 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
 
         ComputeRootPositions(
             fb, poly, isAPrime, invA, familyMember, grayRootDeltas, m, fullBlockLength,
-            pos1, pos2, root1Res, root2Res, parameters.DisableVectorRootUpdate,
-            parameters.UseRootOnlyBucketState, bucketStart);
+            pos1, pos2, root1Res, root2Res, bucketStart);
 
         // Pre-compute scan constants shared across all blocks for this polynomial.
         var ad = (double)poly.A;
@@ -123,30 +142,20 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
         // build per-block hit lists once for this polynomial, then replay only the hits
         // belonging to the current block while its sieve buffer is hot.
         var resieveStart = directSievePlan.ResieveStart;
-        var vectorTrialStart = parameters.UseVectorMediumPrimeTrialDivision
-            ? FirstPrimeIndexAtLeast(fb.Primes, 65_536, resieveStart)
-            : resieveStart;
+        var vectorTrialStart = FirstPrimeIndexAtLeast(fb.Primes, 65_536, resieveStart);
 
         var bucketCount = (fullBlockLength + blockSize - 1) / blockSize;
         LargePrimeBuckets? largePrimeBuckets = null;
         if (bucketStart < fb.Count)
         {
-            var bucketCapacity = _buckets.EstimateCapacity(
-                fb, bucketStart, blockSize, parameters.BucketCapacityPermille);
+            var bucketCapacity = _buckets.EstimateCapacity(fb, bucketStart, blockSize);
             largePrimeBuckets = _buckets.Ensure(bucketCount, bucketCapacity, blockSize);
             largePrimeBuckets.Clear();
             Metrics.Buckets.SlabBytesPerWorker = Math.Max(Metrics.Buckets.SlabBytesPerWorker, largePrimeBuckets.SlabSize.Bytes);
 
-            var bucketScatterStart = parameters.EnableDetailedSieveTiming
-                ? Stopwatch.GetTimestamp() : 0;
-            ScatterBandPrimeHits(
-                fb, bucketStart, fullBlockLength, blockSize,
-                byteLogP,
-                parameters.UseRootOnlyBucketState ? root1Res : pos1,
-                parameters.UseRootOnlyBucketState ? root2Res : pos2,
-                largePrimeBuckets);
-            if (parameters.EnableDetailedSieveTiming)
-                Metrics.Ticks.BucketScatter += Stopwatch.GetTimestamp() - bucketScatterStart;
+            var bucketScatterStart = Stopwatch.GetTimestamp();
+            ScatterBandPrimeHits(fb, bucketStart, fullBlockLength, blockSize, byteLogP, root1Res, root2Res, largePrimeBuckets);
+            Metrics.Ticks.BucketScatter += Stopwatch.GetTimestamp() - bucketScatterStart;
             Metrics.Buckets.OverflowHits += largePrimeBuckets.OverflowHitCount;
             Metrics.Buckets.MaximumHitsPerBucket = Math.Max(
                 Metrics.Buckets.MaximumHitsPerBucket,
@@ -164,9 +173,7 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
 
             FillBlock(fb, blockStart, blockEnd, fullBlockLength, blockSize,
                 smallPrimeVariation.Count, spCount, bucketStart,
-                byteLogP, pos1, pos2, spMasks, spNext, directSievePlan,
-                parameters.DisableBandedDirectSieve,
-                parameters.EnableDetailedSieveTiming, largePrimeBuckets);
+                byteLogP, pos1, pos2, spMasks, spNext, directSievePlan, largePrimeBuckets);
 
             Metrics.Ticks.SieveFill += Stopwatch.GetTimestamp() - tFill;
 
@@ -198,17 +205,9 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
             var knownPrimeHits = CollectKnownPrimeHits(
                 fb, isAPrime, pos1, pos2, root1Res, root2Res, largePrimeBuckets, blockStart, blockSize,
                 vectorTrialStart, effectiveResieveStart, bucketStart,
-                parameters.UseCandidateMajorResieve,
-                parameters.UseVectorCandidateMajorResieve,
-                parameters.UseContiguousVectorResieveLoads,
                 parameters.VectorCandidateMajorMaximumCandidates,
-                parameters.UseFlatCandidateOffsetMap
-                || (!parameters.UseGeometryAdaptiveBucketMatching || blockSize > 65_536)
-                && _blockCandidates.Count >= parameters.FlatCandidateOffsetMapMinimumCandidates,
-                parameters.UseGeometryAdaptiveBucketMatching && blockSize <= 65_536
-                    ? int.MaxValue
-                    : parameters.VectorCandidateMajorBucketMaximumCandidates,
-                parameters.EnableDetailedSieveTiming);
+                parameters.FlatCandidateOffsetMapMinimumCandidates,
+                parameters.VectorCandidateMajorBucketMaximumCandidates);
             Metrics.Ticks.KnownHitCollection += Stopwatch.GetTimestamp() - knownHitStart;
 
             // Root-gated trial division only runs below the resieve/bucket bands;
@@ -239,7 +238,6 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
         int smallPrimeVariationCount, int spCount, int bucketStart,
         byte[] byteLogP, int[] pos1, int[] pos2,
         Vector256<byte>[][]? spMasks, int[][]? spNext, DirectSievePlan directSievePlan,
-        bool disableBandedDirectSieve, bool enableDetailedTiming,
         LargePrimeBuckets? largePrimeBuckets)
     {
         // Pin a ref to the first element of Sieve once: all per-prime writes use
@@ -249,13 +247,14 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
         ref byte sieve0 = ref MemoryMarshal.GetArrayDataReference(Sieve);
 
         // Fill: clear this block and mark every prime's hits within [blockStart, blockEnd).
-        var detailStart = enableDetailedTiming ? Stopwatch.GetTimestamp() : 0;
+        // Detailed timing showed this clear is well under 1% of fill (SPV omits the smallest primes,
+        // so there is no full-buffer small-prime pass to amortise it against). A non-temporal-store
+        // clear was rejected on that ceiling: it would only push the just-cleared buffer out to RAM
+        // for the immediately-following scan to re-fetch.
+        var detailStart = Stopwatch.GetTimestamp();
         Array.Clear(Sieve, 0, blockEnd - blockStart);
-        if (enableDetailedTiming)
-        {
-            Metrics.Ticks.SieveClear += Stopwatch.GetTimestamp() - detailStart;
-            detailStart = Stopwatch.GetTimestamp();
-        }
+        Metrics.Ticks.SieveClear += Stopwatch.GetTimestamp() - detailStart;
+        detailStart = Stopwatch.GetTimestamp();
 
         // Compute the extent of full 32-byte chunks within this block.
         var chunkEnd = blockStart + ((blockEnd - blockStart) / 32) * 32;
@@ -309,39 +308,28 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
             pos1[i] = j1t;
         }
 
-        if (enableDetailedTiming)
-        {
-            Metrics.Ticks.SmallPrimeFill += Stopwatch.GetTimestamp() - detailStart;
-            detailStart = Stopwatch.GetTimestamp();
-        }
+        Metrics.Ticks.SmallPrimeFill += Stopwatch.GetTimestamp() - detailStart;
+        detailStart = Stopwatch.GetTimestamp();
 
         // ── Direct fill for medium primes ──────────────────────────────────
-        if (disableBandedDirectSieve)
-        {
-            DirectSieveKernel.FillGeneric(
-                ref sieve0, blockStart, blockEnd, fullBlockLength,
-                fb.Primes, byteLogP, pos1, pos2, directSievePlan.StartIndex, bucketStart);
-        }
-        else
-        {
-            DirectSieveKernel.FillBanded(
-                ref sieve0, blockStart, blockEnd, fullBlockLength,
-                directSievePlan, byteLogP, pos1, pos2);
-        }
+        // This stays scalar by measurement, not by omission. Vectorising it needs a byte scatter that
+        // neither .NET/AVX2 nor Zen 3 provides, and every latency-hiding / µop-hoisting variant tried
+        // on it (L1 tiling, software prefetch, block-relative writeback, two-prime interleave) was
+        // measured slower-to-neutral because the kernel is instruction-throughput bound on an
+        // already-L2-resident block. See the class header for the full list.
+        DirectSieveKernel.FillBanded(
+            ref sieve0, blockStart, blockEnd, fullBlockLength,
+            directSievePlan, byteLogP, pos1, pos2);
 
-        if (enableDetailedTiming)
-        {
-            Metrics.Ticks.DirectFill += Stopwatch.GetTimestamp() - detailStart;
-            detailStart = Stopwatch.GetTimestamp();
-        }
+        Metrics.Ticks.DirectFill += Stopwatch.GetTimestamp() - detailStart;
+        detailStart = Stopwatch.GetTimestamp();
 
         if (largePrimeBuckets is not null)
         {
             largePrimeBuckets.PrepareBlock(new(blockStart / blockSize), ref sieve0);
         }
 
-        if (enableDetailedTiming)
-            Metrics.Ticks.BucketReplay += Stopwatch.GetTimestamp() - detailStart;
+        Metrics.Ticks.BucketReplay += Stopwatch.GetTimestamp() - detailStart;
     }
 
     /// <summary>
@@ -389,6 +377,13 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
                         continue;
                     }
                 }
+                // The exact BigInteger evaluation is already gated behind the block-wide and exact
+                // byte thresholds above, which reject ~95% of provisional reports before any
+                // BigInteger is constructed; measured, this eval is under 0.1% of sieve-stage CPU.
+                // Proposals to defer it further or swap the candidate container were found to be
+                // already-implemented and to have no measurable effect, and the per-candidate plumbing
+                // was measured to stay flat (not superlinear) under a 40x wide-2LP stress — so no
+                // pipeline restructuring was adopted.
                 var tPE = Stopwatch.GetTimestamp();
                 var bx = new BigInteger(x);
                 var v = poly.A * bx * bx + 2 * poly.B * bx + poly.C;
@@ -407,11 +402,16 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
             var si = from;
             ref var scanSieve0 = ref MemoryMarshal.GetArrayDataReference(Sieve);
 
-            if (minThreshByte > 0 && Avx2.IsSupported && !parameters.DisableVectorScan)
+            if (minThreshByte > 0 && Avx2.IsSupported)
             {
                 // Subtract one less than the inclusive threshold: SubtractSaturate(value, gate)
                 // is positive exactly when value >= minThreshByte. At threshold zero every byte
                 // qualifies, so no vector chunk can be skipped safely.
+                // This saturating-subtract + VPTEST skip is the measured-best gate. A high-bit
+                // predicate (bias so survivors set the sign bit) was tried and rejected: it is a
+                // subtractive test on an additively accumulated byte scale, so it mispredicts. Adding
+                // a movemask pass to compact the survivors was also no material gain — the scan is
+                // already under ~2% of sieve CPU, so there is almost nothing left here to win.
                 var minThreshVec = Vector256.Create(InclusiveVectorGate(minThreshByte));
 
                 // AVX2: process 32 bytes per iteration (Vector256<byte>).
@@ -568,14 +568,13 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
     private static void ComputeRootPositions(
         FactorBaseData fb, PolynomialCandidate poly, bool[] isAPrime, long[] invA,
         PolynomialFamilyMember familyMember, int[][]? grayRootDeltas, long m, int fullBlockLength,
-        int[] pos1, int[] pos2, int[] root1Res, int[] root2Res, bool disableVectorRootUpdate,
-        bool useRootOnlyBucketState, int bucketStart)
+        int[] pos1, int[] pos2, int[] root1Res, int[] root2Res, int bucketStart)
     {
         var flipIndex = familyMember.FlipIndex.GetValueOrDefault();
         var canIncrementRoots = familyMember.FlipIndex.HasValue
             && grayRootDeltas is not null
             && root1Res.Length >= fb.Count;
-        var useVectorRootUpdate = canIncrementRoots && Avx2.IsSupported && !disableVectorRootUpdate;
+        var useVectorRootUpdate = canIncrementRoots && Avx2.IsSupported;
         var deltas = canIncrementRoots ? grayRootDeltas![flipIndex] : null;
         var primes32 = useVectorRootUpdate ? fb.Primes32 : null;
 
@@ -586,14 +585,14 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
                 && TryUpdateRootsVector(
                     i, primes32!, deltas!, familyMember.FlipDirection,
                     familyMember.NormalizationCorrection, pos1, pos2, root1Res, root2Res,
-                    !useRootOnlyBucketState || i < bucketStart))
+                    i < bucketStart))
             {
                 i += Vector256<int>.Count;
                 continue;
             }
 
             var p = fb.Primes[i]; // long
-            var storePositions = !useRootOnlyBucketState || i < bucketStart;
+            var storePositions = i < bucketStart;
 
             if (isAPrime[i])
             {
@@ -768,6 +767,20 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
     /// per-block <paramref name="buckets"/>, so each block later replays only the hits that land
     /// within it. Runs once per polynomial.
     /// </summary>
+    // This stays a separate pass, run after ComputeRootPositions rather than fused into it, on
+    // purpose. Fusing large-prime root updates with the bucket scatter (YAFU's design) was measured
+    // and rejected: the only thing fusion removes is the per-*prime* re-read of the just-written,
+    // L1-resident root positions, whereas the dominant cost here is the per-*hit* slab stores, which
+    // are memory-bandwidth bound at C110 and untouched by fusion — a ceiling under ~1% end to end.
+    // Generating a whole A-family's hits at once (instead of once per polynomial) was likewise
+    // rejected: it re-measured about 2x slower for current intervals, and the apparent early win was
+    // traced to a tiered-JIT warm-up artifact.
+    // Splitting the per-prime progression loops below into specialised "one-hit" (p >= interval) and
+    // "two-hit" (p >= interval/2) bands — on the theory that a prime landing at most once or twice
+    // over the whole interval does not need a general loop — was built and rejected too: it was
+    // neutral to markedly slower (specialising both bands pushed C87 scatter from ~1.4 to ~1.8
+    // CPU-seconds). The while loops here already exit after one or two iterations for those primes,
+    // so explicit band discovery only adds control flow without removing any work.
     private static void ScatterBandPrimeHits(
         FactorBaseData fb, int bucketStart, int fullBlockLength, int blockSize,
         byte[] byteLogP, int[] pos1, int[] pos2, LargePrimeBuckets buckets)
@@ -809,16 +822,18 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
     /// large-prime buckets, so trial division can skip re-deriving them. Returns <c>null</c> when
     /// neither source applies (no candidates, or both bands are disabled for this polynomial).
     /// </summary>
+    // Software-prefetching this known-hit gather was measured and rejected. The gather streams the
+    // root-residue arrays sequentially, which the hardware prefetcher already covers, and prefetching
+    // scattered/strided sieve accesses was independently refuted for the fill kernel. Known-hit
+    // collection is also only ~1.3% of sieve CPU at the C87 gate (the ~14% figure is C110-specific),
+    // so the ceiling is under that; revisit only if the working gate moves to C110-scale intervals.
     private List<int>[]? CollectKnownPrimeHits(
         FactorBaseData fb, bool[] isAPrime, int[] pos1, int[] pos2, int[] root1Res, int[] root2Res,
         LargePrimeBuckets? largePrimeBuckets, int blockStart, int blockSize,
         int vectorTrialStart, int resieveStart, int bucketStart,
-        bool useCandidateMajorResieve,
-        bool useVectorCandidateMajorResieve, bool useContiguousVectorResieveLoads,
         int vectorCandidateMajorMaximumCandidates,
-        bool useFlatCandidateOffsetMap,
-        int vectorCandidateMajorBucketMaximumCandidates,
-        bool enableDetailedTiming)
+        int flatCandidateOffsetMapMinimumCandidates,
+        int vectorCandidateMajorBucketMaximumCandidates)
     {
         if (_blockCandidates.Count == 0
             || (vectorTrialStart >= bucketStart && largePrimeBuckets is null))
@@ -826,35 +841,28 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
             return null;
         }
 
+        var useFlatCandidateOffsetMap = _blockCandidates.Count >= flatCandidateOffsetMapMinimumCandidates;
         var knownPrimeHits = _candidates.PrepareCandidatePrimeHits(_blockCandidates.Count);
         // Candidate offsets are ascending because the scan walks the block in order.
         var offsets = _candidates.PrepareCandidateOffsets(_blockCandidates);
         var offsetToCandidate = useFlatCandidateOffsetMap
             ? _candidates.PrepareOffsetToCandidateMap(_blockCandidates, blockSize)
             : ReadOnlySpan<int>.Empty;
-        var directKnownHitStart = enableDetailedTiming ? Stopwatch.GetTimestamp() : 0;
+        var directKnownHitStart = Stopwatch.GetTimestamp();
         if (vectorTrialStart < resieveStart)
         {
-            CollectCandidateMajorVector(
+            CandidatePrimeResieve.CollectCandidateMajorVectorContiguous(
                 fb, blockStart, blockSize, vectorTrialStart, resieveStart,
-                pos1, pos2, root2Res, offsets, knownPrimeHits,
-                useContiguousVectorResieveLoads);
+                pos1, pos2, root2Res, offsets, knownPrimeHits);
         }
 
         if (resieveStart < bucketStart)
         {
-            if (useVectorCandidateMajorResieve
-                && _blockCandidates.Count <= vectorCandidateMajorMaximumCandidates)
+            if (_blockCandidates.Count <= vectorCandidateMajorMaximumCandidates)
             {
-                CollectCandidateMajorVector(
+                CandidatePrimeResieve.CollectCandidateMajorVectorContiguous(
                     fb, blockStart, blockSize, resieveStart, bucketStart,
-                    pos1, pos2, root2Res, offsets, knownPrimeHits,
-                    useContiguousVectorResieveLoads);
-            }
-            else if (useCandidateMajorResieve)
-            {
-                CandidatePrimeResieve.CollectCandidateMajor(
-                    fb, blockStart, resieveStart, bucketStart, root1Res, root2Res, offsets, knownPrimeHits);
+                    pos1, pos2, root2Res, offsets, knownPrimeHits);
             }
             else if (useFlatCandidateOffsetMap)
             {
@@ -871,12 +879,14 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
 
         if (largePrimeBuckets is not null)
         {
-            if (enableDetailedTiming)
-            {
-                Metrics.Ticks.DirectKnownHitCollection +=
-                    Stopwatch.GetTimestamp() - directKnownHitStart;
-                directKnownHitStart = Stopwatch.GetTimestamp();
-            }
+            Metrics.Ticks.DirectKnownHitCollection += Stopwatch.GetTimestamp() - directKnownHitStart;
+            directKnownHitStart = Stopwatch.GetTimestamp();
+            // Bucket-candidate matching is chosen here by geometry (candidate-major vector / flat
+            // offset map / binary search). Fronting any of these with a cache-resident bit or Bloom
+            // pre-filter built from the candidate offsets was measured and rejected: the candidate
+            // sets are already sparse, so the filter rejects too few hits to repay its construction
+            // and hashing and it roughly doubled known-hit CPU at C110. A probabilistic front end is
+            // the wrong shape for this phase; exact matching is retained.
             var bucket = new BucketIndex(blockStart / blockSize);
             var bucketHits = largePrimeBuckets.HitCount(bucket);
             long decodedPrimeHits;
@@ -908,36 +918,14 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
                     bucket, offsets, knownPrimeHits);
             }
             Metrics.Buckets.DecodedPrimeHits += decodedPrimeHits;
-            if (enableDetailedTiming)
-                Metrics.Ticks.BucketKnownHitCollection +=
-                    Stopwatch.GetTimestamp() - directKnownHitStart;
+            Metrics.Ticks.BucketKnownHitCollection += Stopwatch.GetTimestamp() - directKnownHitStart;
         }
-        else if (enableDetailedTiming)
+        else
         {
-            Metrics.Ticks.DirectKnownHitCollection +=
-                Stopwatch.GetTimestamp() - directKnownHitStart;
+            Metrics.Ticks.DirectKnownHitCollection += Stopwatch.GetTimestamp() - directKnownHitStart;
         }
 
         return knownPrimeHits;
-    }
-
-    private static void CollectCandidateMajorVector(
-        FactorBaseData fb, int blockStart, int blockSize,
-        int startPrimeIndex, int endPrimeIndex, int[] pos1, int[] pos2,
-        int[] root2Res, ReadOnlySpan<int> candidateOffsets, List<int>[] primeHits,
-        bool useContiguousLoads)
-    {
-        if (useContiguousLoads)
-        {
-            CandidatePrimeResieve.CollectCandidateMajorVectorContiguous(
-                fb, blockStart, blockSize, startPrimeIndex, endPrimeIndex,
-                pos1, pos2, root2Res, candidateOffsets, primeHits);
-            return;
-        }
-
-        CandidatePrimeResieve.CollectCandidateMajorVector(
-            fb, blockStart, blockSize, startPrimeIndex, endPrimeIndex,
-            pos1, pos2, root2Res, candidateOffsets, primeHits);
     }
 
     private static int FirstPrimeIndexAtLeast(long[] primes, int minimumPrime, int end)

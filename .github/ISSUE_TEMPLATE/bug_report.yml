@@ -1,0 +1,68 @@
+name: Bug report
+description: Something produced a wrong result, crashed, or behaved unexpectedly.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. A factoring run is deterministic given the same inputs and
+        `--parallelism 1`, so the details below usually make a bug reproducible on the first try.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what did you get instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Exact command
+      description: >
+        The full command line, including the number being factored and any flags. If the number is
+        sensitive, a different composite of the same digit count that reproduces the issue is fine.
+      render: shell
+      placeholder: .\QS\bin\Release\net10.0\qs.exe 15347 --parallelism 1
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: >
+        Console output — please run with `--debug` for the full per-phase counter dump. If the run
+        produced a `runs/<job-id>/` directory, its contents (or the phase that failed) help a lot.
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: dotnet
+    attributes:
+      label: .NET SDK version
+      description: Output of `dotnet --version`.
+      placeholder: "10.0.110"
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: OS and CPU
+      description: >
+        CPU model matters — the sieve has AVX2 kernels with scalar fallbacks, so behavior can
+        differ between machines.
+      placeholder: "Windows 11, AMD Ryzen 9 5950X (Zen 3, AVX2)"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: reproducibility
+    attributes:
+      label: Reproducibility
+      options:
+        - label: It reproduces with `--parallelism 1`
+        - label: It happens every run, not intermittently

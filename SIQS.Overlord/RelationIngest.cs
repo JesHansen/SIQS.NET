@@ -16,6 +16,8 @@ internal sealed class RelationIngest
     private readonly RawRelationBatchFileSink _sink;
     private readonly object _gate = new();
 
+    /// <param name="verifier">Checks each uploaded relation's congruence before it is accepted.</param>
+    /// <param name="sink">Batch file sink that persisted (and numbered) relations are appended to.</param>
     /// <param name="existing">
     /// Relations already on disk from a previous sieving pass (e.g. a matrix top-up re-enters the
     /// Sieving phase with batches kept). They are folded into the tally for the usable count but not

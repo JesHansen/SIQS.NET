@@ -7,6 +7,21 @@ namespace Sieving;
 /// Tunable sieving parameters. All values are overrideable by the CLI; <see cref="Default"/>
 /// computes the deterministic v1 defaults from the factor base, matching the pipeline owner.
 /// </summary>
+/// <remarks>
+/// <c>BucketLargePrimeCutoff</c>: prime cutoff for large-prime bucket sieving. 0 disables the
+/// bucket path. When enabled, primes p >= cutoff are materialized as per-block hit lists once per
+/// polynomial and replayed during block fill; smaller primes use the direct fill paths.
+/// <para>
+/// <c>ResieveLargePrimeCutoff</c>: prime cutoff for candidate resieving. When enabled, primes in
+/// [cutoff, BucketLargePrimeCutoff) are rediscovered by walking their progressions once per block
+/// instead of root-gating them for every candidate. 0 disables resieving.
+/// </para>
+/// <para>
+/// <c>SmallPrimeVariationBound</c>: upper prime bound for small-prime variation. Primes at or
+/// below the bound are omitted from dense sieve fill and recovered only for provisional reports.
+/// Zero disables it.
+/// </para>
+/// </remarks>
 public sealed record SievingParameters(
     long SieveHalfInterval,
     long PolynomialCount,
@@ -36,22 +51,23 @@ public sealed record SievingParameters(
     internal const int SmallPrimeVariationDefaultBound = 256;
     internal const int TwoLargePrimeDefaultMinDigits = 110;
 
-    internal bool DisableVectorScan { get; init; }
-    internal bool DisableVectorRootUpdate { get; init; }
-    internal bool DisableBandedDirectSieve { get; init; }
-    internal bool EnableDetailedSieveTiming { get; init; }
-    internal bool UseRootOnlyBucketState { get; init; } = true;
-    internal int BucketCapacityPermille { get; init; } = 1_100;
-    internal bool UseCandidateMajorResieve { get; init; }
-    internal bool UseVectorCandidateMajorResieve { get; init; } = true;
-    internal bool UseContiguousVectorResieveLoads { get; init; } = true;
+    // These four thresholds are the only sieve dispatch knobs left: each picks between two
+    // collection strategies based on how many candidates a block actually produced (a quantity that
+    // varies block-to-block within a single run, not by digit size). Past optimization-experiment
+    // on/off toggles that never varied in production have been removed; see git history if one of
+    // their measurements is needed again.
     internal int VectorCandidateMajorMaximumCandidates { get; init; } = 16;
-    internal bool UseVectorMediumPrimeTrialDivision { get; init; } = true;
-    internal bool UseFlatCandidateOffsetMap { get; init; }
     internal int FlatCandidateOffsetMapMinimumCandidates { get; init; } = 16;
     internal int VectorCandidateMajorBucketMaximumCandidates { get; init; } = 15;
-    internal bool UseGeometryAdaptiveBucketMatching { get; init; } = true;
     internal int CandidateResieveMinimumCandidates { get; init; } = 2;
+
+    /// <summary>
+    /// When set, each worker appends every composite cofactor residual it sees to
+    /// <see cref="PolynomialSieveWorker.CompositeResiduals"/> before splitting. Observation-only: it
+    /// never affects a relation decision. Used by <c>SIQS.Benchmarks</c>' residual-corpus tooling to
+    /// build the cofactor-splitter research corpora (e.g. the ones behind the current
+    /// <see cref="CofactorSplitterKind.MicroEcmStage2"/> default), not by the pipeline.
+    /// </summary>
     internal bool CaptureCompositeResiduals { get; init; }
 
     /// <summary>
@@ -66,26 +82,6 @@ public sealed record SievingParameters(
     /// fitting comfortably in the private cache of typical desktop x86-64 CPUs.
     /// </summary>
     public int EffectiveSieveBlockSize => SieveBlockSize > 0 ? SieveBlockSize : 262_144;
-
-    /// <summary>
-    /// Prime cutoff for large-prime bucket sieving. 0 disables the bucket path.
-    /// When enabled, primes p >= cutoff are materialized as per-block hit lists once per
-    /// polynomial and replayed during block fill; smaller primes use the direct fill paths.
-    /// </summary>
-    public int EffectiveBucketLargePrimeCutoff => BucketLargePrimeCutoff;
-
-    /// <summary>
-    /// Prime cutoff for candidate resieving. When enabled, primes in
-    /// [cutoff, BucketLargePrimeCutoff) are rediscovered by walking their progressions
-    /// once per block instead of root-gating them for every candidate. 0 disables resieving.
-    /// </summary>
-    public int EffectiveResieveLargePrimeCutoff => ResieveLargePrimeCutoff;
-
-    /// <summary>
-    /// Upper prime bound for small-prime variation. Primes at or below the bound are
-    /// omitted from dense sieve fill and recovered only for provisional reports. Zero disables it.
-    /// </summary>
-    public int EffectiveSmallPrimeVariationBound => SmallPrimeVariationBound;
 
     public static SievingParameters Default(FactorBaseDocument factorBase)
     {
@@ -169,6 +165,12 @@ public sealed record SievingParameters(
             : 10;
 
     /// <summary>Cache block size for block sieving, using the measured monotonic C13-C115 tiers.</summary>
+    // These block sizes were re-confirmed, not just inherited. Copying YAFU's much smaller (~32 KB)
+    // blocks, and separately an "integrated" cache-sized kernel that walks true small blocks, were
+    // both measured and rejected: small blocks force each prime's root to be re-advanced far more
+    // often, and the retuning pass that followed the kernel work left the block size unchanged. Do
+    // not lower it in isolation — it only interacts favourably with a compact fused bucket layout,
+    // which itself has no measured win (see LargePrimeBuckets).
     internal static int SelectSieveBlockSize(int digits)
         => digits >= 70 ? 524_288
             : 262_144;
@@ -181,6 +183,9 @@ public sealed record SievingParameters(
             : 0;
 
     /// <summary>Prime cutoff for candidate resieving; enabled with the bucket tier.</summary>
+    // The bucket cutoff was retuned downward at a measured crossover, but the resieve cutoff was
+    // swept in the same study and left unchanged: moving it showed no reliable win once the rejected
+    // hot-loop prototypes were removed from the comparison.
     internal static int SelectResieveLargePrimeCutoff(int digits)
         => digits >= 85 ? 262_144 : 0;
 

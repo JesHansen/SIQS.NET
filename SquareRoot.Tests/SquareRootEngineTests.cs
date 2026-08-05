@@ -77,6 +77,62 @@ public class SquareRootEngineTests
     }
 
     [Fact]
+    public void Congruence_that_fails_x_squared_equals_y_squared_is_invalid()
+    {
+        // Same shape as End_to_end_example_factors_77, but T is corrupted (5 instead of 9).
+        // Exponents and parity columns are still self-consistent, so parity_mismatch and
+        // odd_exponent_sum both pass; only actually checking X^2 == Y^2 (mod N) catches this.
+        var fb = FactorBase(77, 1, 2);
+        var relations = new FilteredRelationsDocument(77, 1, 77, new[]
+        {
+            new FilteredRelationRecord("F00000000", RelationKind.Full, new[] { "R00000000" },
+                T: 5, Sign: 1, Exponents: new Dictionary<int, int> { [1] = 2 },
+                ParityColumns: Array.Empty<int>(), LargePrime: null),
+        });
+        var deps = new DependenciesDocument(77, 1, 77, 1, 2, new[]
+        {
+            new DependencyRecord(0, new[] { 0 }, new[] { "F00000000" }),
+        });
+
+        var result = SquareRootEngine.Run(fb, relations, deps);
+
+        var row = Assert.Single(result.Factors.Results);
+        Assert.Equal(FactorizationStatus.Invalid, row.Status);
+        Assert.Equal("congruence_not_square", row.Reason);
+    }
+
+    [Fact]
+    public void Marks_composite_factor_when_target_has_three_prime_factors()
+    {
+        // N = 5 * 7 * 11 = 385. T=337 and Y=2*101 mod 385 are a genuine congruence (X == Y mod 5,
+        // X == -Y mod 7 and mod 11), chosen so gcd(|X-Y|,N)=5 and gcd((X+Y) mod N,N)=77=7*11.
+        // Nothing about the GCD math flags that 77 is composite -- only an explicit primality
+        // check on the emitted factors does.
+        var n = new BigInteger(385);
+        var fb = FactorBase(n, 1, 2);
+        var q = new BigInteger(101);
+
+        var relations = new FilteredRelationsDocument(n, 1, n, new[]
+        {
+            new FilteredRelationRecord("F00000000", RelationKind.CombinedPartial, new[] { "R0", "R1" },
+                T: 337, Sign: 1, Exponents: new Dictionary<int, int> { [1] = 2 }, ParityColumns: Array.Empty<int>(), LargePrime: q),
+        });
+        var deps = new DependenciesDocument(n, 1, n, 1, 1, new[]
+        {
+            new DependencyRecord(0, new[] { 0 }, new[] { "F00000000" }),
+        });
+
+        var result = SquareRootEngine.Run(fb, relations, deps);
+        var row = Assert.Single(result.Factors.Results);
+
+        Assert.Equal(FactorizationStatus.FactorFound, row.Status);
+        Assert.Equal(new BigInteger(5), row.Factor1);
+        Assert.Equal(new BigInteger(77), row.Factor2);
+        Assert.False(row.Factor1IsComposite);
+        Assert.True(row.Factor2IsComposite);
+    }
+
+    [Fact]
     public void Combined_partial_multiplies_large_prime_into_Y()
     {
         // Construct a dependency that only factors correctly when q is folded into Y.
@@ -87,11 +143,13 @@ public class SquareRootEngineTests
         var fb = FactorBase(n, 1, 2, 3);
         var q = new BigInteger(101);
 
-        // Relation A: combined_partial, t=tA, exponents {1:2} (=> Y contributes 2^1), large_prime=q
+        // Relation A: combined_partial, t=tA, exponents {1:2} (=> Y contributes 2^1), large_prime=q.
+        // T=270 is the CRT "other root" of Y=202 mod n (X == Y mod 17, X == -Y mod 59), so
+        // X^2 == Y^2 (mod n) genuinely holds and factors n via the two GCDs.
         var relations = new FilteredRelationsDocument(n, 1, n, new[]
         {
             new FilteredRelationRecord("F00000000", RelationKind.CombinedPartial, new[] { "R0", "R1" },
-                T: 50, Sign: 1, Exponents: new Dictionary<int, int> { [1] = 2 }, ParityColumns: Array.Empty<int>(), LargePrime: q),
+                T: 270, Sign: 1, Exponents: new Dictionary<int, int> { [1] = 2 }, ParityColumns: Array.Empty<int>(), LargePrime: q),
         });
         var deps = new DependenciesDocument(n, 1, n, 1, 3, new[]
         {
@@ -101,8 +159,8 @@ public class SquareRootEngineTests
         var result = SquareRootEngine.Run(fb, relations, deps);
         var row = Assert.Single(result.Factors.Results);
 
-        // Y manual = 2^(2/2) * q mod N ; X = 50 mod N. Verify the engine used q by checking gcd values.
-        var x = new BigInteger(50);
+        // Y manual = 2^(2/2) * q mod N. Verify the engine used q by checking gcd values.
+        var x = new BigInteger(270);
         var y = BigInteger.Remainder(BigInteger.ModPow(2, 1, n) * q, n);
         var expectedG1 = BigInteger.GreatestCommonDivisor(BigInteger.Abs(x - y), n);
         Assert.Equal(expectedG1, row.GcdMinus);
@@ -115,10 +173,11 @@ public class SquareRootEngineTests
         var fb = FactorBase(n, 1, 2, 3);
         var largePrimes = new BigInteger[] { 101, 103 };
 
+        // T=729 is the CRT "other root" of Y=746 mod n, so X^2 == Y^2 (mod n) genuinely holds.
         var relations = new FilteredRelationsDocument(n, 1, n, new[]
         {
             new FilteredRelationRecord("F00000000", RelationKind.CombinedPartial, new[] { "R0", "R1", "R2" },
-                T: 50, Sign: 1, Exponents: new Dictionary<int, int> { [1] = 2 }, ParityColumns: Array.Empty<int>(), LargePrime: null)
+                T: 729, Sign: 1, Exponents: new Dictionary<int, int> { [1] = 2 }, ParityColumns: Array.Empty<int>(), LargePrime: null)
             {
                 LargePrimes = largePrimes,
             },
@@ -131,7 +190,7 @@ public class SquareRootEngineTests
         var result = SquareRootEngine.Run(fb, relations, deps);
         var row = Assert.Single(result.Factors.Results);
 
-        var x = new BigInteger(50);
+        var x = new BigInteger(729);
         var y = largePrimes.Aggregate(new BigInteger(2), (acc, q) => BigInteger.Remainder(acc * q, n));
         var expectedG1 = BigInteger.GreatestCommonDivisor(BigInteger.Abs(x - y), n);
         Assert.Equal(expectedG1, row.GcdMinus);

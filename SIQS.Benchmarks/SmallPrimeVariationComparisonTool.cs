@@ -32,8 +32,6 @@ internal static class SmallPrimeVariationComparisonTool
             PolynomialCount = ParseOptional(
                 args, 5, (int)Math.Min(int.MaxValue,
                     SievingParameters.Default(factorBase).PolynomialCount)),
-            UseRootOnlyBucketState = true,
-            EnableDetailedSieveTiming = true,
         };
         var mode = args.Length > 4 ? args[4] : "both";
         Configuration[] configurations = mode switch

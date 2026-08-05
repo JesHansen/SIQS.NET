@@ -25,10 +25,13 @@ internal sealed class LinearAlgebraCommandHandler
             throw new ArgumentOutOfRangeException(nameof(requestedParallelism), "Linear algebra parallelism must be zero or positive.");
         }
 
+        var seed = cli.GetULong("linalg-seed") ?? BlockLanczosOptions.DefaultSeed;
+
         var options = new BlockLanczosOptions(
             BlockLanczosOptions.DefaultPostLanczosRows,
             BlockLanczosOptions.DefaultMinPostLanczosDimension,
-            requestedParallelism);
+            requestedParallelism,
+            seed);
         var total = Stopwatch.StartNew();
         var watch = Stopwatch.StartNew();
         var meta = MatrixMetaFile.Parse(File.ReadAllText(metaPath));
@@ -73,6 +76,7 @@ internal sealed class LinearAlgebraCommandHandler
             ["max_dependencies"] = maxDependencies.ToString(CultureInfo.InvariantCulture),
             ["linalg_parallelism_requested"] = requestedParallelism.ToString(CultureInfo.InvariantCulture),
             ["linalg_parallelism"] = options.EffectiveParallelism.ToString(CultureInfo.InvariantCulture),
+            ["linalg_seed"] = options.Seed.ToString(CultureInfo.InvariantCulture),
             ["rows"] = meta.RowCount.ToString(CultureInfo.InvariantCulture),
             ["columns"] = meta.ColumnCount.ToString(CultureInfo.InvariantCulture),
             ["zero_rows"] = stats.ZeroRows.ToString(CultureInfo.InvariantCulture),

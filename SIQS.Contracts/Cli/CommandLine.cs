@@ -123,6 +123,9 @@ public sealed class CommandLine
     public long? GetLong(string key)
         => GetOptional(key) is { } v ? long.Parse(v, CultureInfo.InvariantCulture) : null;
 
+    public ulong? GetULong(string key)
+        => GetOptional(key) is { } v ? ulong.Parse(v, CultureInfo.InvariantCulture) : null;
+
     public double? GetDouble(string key)
         => GetOptional(key) is { } v ? double.Parse(v, CultureInfo.InvariantCulture) : null;
 

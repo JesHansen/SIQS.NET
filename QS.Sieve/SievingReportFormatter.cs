@@ -10,7 +10,7 @@ internal static class SievingReportFormatter
         var parameters = result.Parameters;
         Console.WriteLine($"  [sieving]     full={counters.FullRelations}, partials={counters.Partials}, raw={counters.RawRelations}, usable={counters.UsableRelations}, polynomials={counters.Polynomials}/{parameters.PolynomialCount}");
         Console.WriteLine($"  [timing]      elapsed={result.Elapsed.TotalSeconds:F3}s, setup={counters.SetupCpuMs}ms, fill={counters.SieveFillCpuMs}ms, scan={counters.ScanCpuMs}ms, trial-div={counters.TrialDivCpuMs}ms");
-        if (parameters.EffectiveSmallPrimeVariationBound > 0)
+        if (parameters.SmallPrimeVariationBound > 0)
         {
             Console.WriteLine($"  [spv]         primes={counters.SmallPrimeVariationCount}, allowance={counters.SmallPrimeVariationAllowance}, reports={counters.SmallPrimeVariationReports}, rejected={counters.SmallPrimeVariationRejected}, cpu={counters.SmallPrimeVariationCpuMs}ms");
         }

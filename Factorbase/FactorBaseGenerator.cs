@@ -24,7 +24,7 @@ public sealed record FactorBaseGenerationResult(
 
 /// <summary>
 /// Builds the factor base for <c>ScaledN = Multiplier * TargetN</c>, performing the trivial-factor
-/// prechecks first. See <c>Instructions/Factorbase.md</c> for the full specification.
+/// prechecks first.
 /// </summary>
 public static class FactorBaseGenerator
 {

@@ -150,6 +150,13 @@ internal static class TwoLargePrimeSplitter
             return false;
         }
 
+        // These two screens are left scalar and one-at-a-time on purpose. Before building a Zen-3 SIMD
+        // Montgomery batched-PRP kernel the screen cost was measured, and the batching was rejected:
+        // in the wide-2LP regime the small-factor screen below rejects essentially zero residuals
+        // (trial division has already removed every factor at or below the factor-base bound), and the
+        // only live screen — the base-2 PRP just after it — is about 1% of the whole cofactor path.
+        // Speeding the screens up therefore has a ~1.01x ceiling; the cost is the split itself, which
+        // the micro-ECM stage-two path already addresses.
         if (CofactorPrimality64.HasSmallFactorAtOrBelow(value, factorBaseBound))
         {
             if (counters is not null) counters.Metrics.TwoLargePrime.ResidualSmallFactor++;
@@ -165,6 +172,13 @@ internal static class TwoLargePrimeSplitter
 
         counters?.CompositeResiduals?.Add(value);
 
+        // The split below runs the arithmetic directly, with no memoisation of prior results. A
+        // bounded per-worker cache of successful and unsuccessful 2LP splits was tried and removed:
+        // across a C110 workload it took 29,189 lookups and returned exactly zero hits, so every
+        // lookup and insertion was pure overhead. Residuals essentially never repeat, so any future
+        // batching would have to be a genuinely different arithmetic kernel (e.g. product-tree batch
+        // GCD), not queued calls to this same scalar splitter — and the pipeline already saturates
+        // all workers, so a second CPU-bound queue would only oversubscribe the cores.
         var factor = 1UL;
         SplitMethod? splitterUsed = null;
 

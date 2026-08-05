@@ -39,6 +39,11 @@ internal readonly record struct SmallPrimeVariation(int Count, byte Allowance)
     public byte PreliminaryThreshold(byte exactThreshold)
         => (byte)Math.Max(0, exactThreshold - Allowance);
 
+    // Recovery is a single pass over the whole omitted band. A two-stage variant was tried and
+    // rejected: recover the primes up to a lower bound, apply a remaining statistical allowance, then
+    // recover the upper band only for the survivors. It helped C87 (~2.7%) but was neutral to ~2%
+    // slower at C110 depending on the SPV bound — the extra branches and second pass do not justify a
+    // size-specific path. Only the wider single-stage bound survived to production.
     public int RecoverCredit(
         FactorBaseData fb,
         byte[] byteLogP,

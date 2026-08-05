@@ -1,0 +1,46 @@
+name: Performance proposal
+description: Propose a change intended to make a pipeline stage faster.
+labels: [performance]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This project's rule is **measure, don't guess**. Several plausible-sounding
+        optimizations have already been built and measured *negative* - where that happened, the
+        comment next to the current implementation says so, so it's worth grepping the stage you
+        have in mind before investing in the idea.
+
+  - type: input
+    id: stage
+    attributes:
+      label: Which stage
+      placeholder: "Sieving - direct fill kernel"
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: The change
+      description: What would be done differently, and why should it be faster?
+    validations:
+      required: true
+
+  - type: textarea
+    id: measurement
+    attributes:
+      label: Measurement
+      description: >
+        If you have numbers already, share them: target size, before/after wall time and CPU time,
+        repetitions, and the machine. If you don't have numbers yet, say so - that's fine, it just
+        means the proposal is a hypothesis rather than a result.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: invariants
+    attributes:
+      label: Invariants
+      options:
+        - label: This does not change the relations emitted (or, if it does, that is explained above)
+        - label: This does not change the serialized run/relation file formats

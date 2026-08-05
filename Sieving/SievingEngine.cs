@@ -6,7 +6,7 @@ namespace Sieving;
 /// <summary>
 /// Public entry point to the SIQS sieving phase. Sieving generates polynomials, sieves the interval
 /// <c>[-M, M]</c>, trial-divides promising values against the factor base, and classifies full and
-/// large-prime partial relations. See <c>Instructions/Sieving.md</c>.
+/// large-prime partial relations.
 /// <para>
 /// This type is only the facade; the run itself is driven by <see cref="SieveRunCoordinator"/> and
 /// the thread-local <see cref="PolynomialSieveWorker"/>.

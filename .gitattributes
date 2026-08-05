@@ -1,0 +1,23 @@
+# Normalize line endings. Everything is stored LF in the repository and checked out with the
+# platform's native endings, so a Windows and a Linux contributor never fight over whitespace.
+* text=auto
+
+# Files that must keep a specific ending regardless of platform.
+*.ps1   text eol=crlf
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+*.sh    text eol=lf
+
+# Binary assets: never munge, never diff as text.
+*.jpg   binary
+*.jpeg  binary
+*.png   binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.dll   binary
+*.exe   binary
+
+# Give GitHub better language stats and diffs for the C# solution.
+*.slnx      linguist-language=XML
+*.razor     linguist-language=C#

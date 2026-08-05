@@ -53,21 +53,21 @@ public static class SievingParameterResolver
 
     private static void ValidateSmallPrimeVariationConfiguration(SievingParameters parameters)
     {
-        var bound = parameters.EffectiveSmallPrimeVariationBound;
+        var bound = parameters.SmallPrimeVariationBound;
         if (bound == 0)
         {
             return;
         }
 
-        if (parameters.EffectiveBucketLargePrimeCutoff > 0 &&
-            bound >= parameters.EffectiveBucketLargePrimeCutoff)
+        if (parameters.BucketLargePrimeCutoff > 0 &&
+            bound >= parameters.BucketLargePrimeCutoff)
         {
             throw new InvalidOperationException(
                 "The small-prime-variation bound must be below the bucket cutoff.");
         }
 
-        if (parameters.EffectiveResieveLargePrimeCutoff > 0 &&
-            bound >= parameters.EffectiveResieveLargePrimeCutoff)
+        if (parameters.ResieveLargePrimeCutoff > 0 &&
+            bound >= parameters.ResieveLargePrimeCutoff)
         {
             throw new InvalidOperationException(
                 "The small-prime-variation bound must be below the resieve cutoff.");

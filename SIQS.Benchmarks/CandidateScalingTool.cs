@@ -43,7 +43,6 @@ internal static class CandidateScalingTool
         {
             Parallelism = 1,
             TrialRawRelationTarget = rawTarget,
-            EnableDetailedSieveTiming = true,
         };
         var wideLp2 = checked((long)(fbBound * wideMultiplier));
         var wide = normal with

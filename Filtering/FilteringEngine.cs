@@ -6,7 +6,7 @@ namespace Filtering;
 /// <summary>
 /// Combines single-large-prime partials into full relations, removes duplicates, prunes relations
 /// that cannot contribute to a dependency (singleton columns), and emits the sparse GF(2) matrix
-/// for linear algebra. See <c>Instructions/Filtering.md</c>.
+/// for linear algebra.
 ///
 /// The engine makes two passes over the partial input. Pass 1 streams every record once, keeping
 /// only the large-prime graph skeleton: two <c>ulong</c> vertices and a record locator per forest

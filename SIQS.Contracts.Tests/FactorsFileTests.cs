@@ -12,8 +12,9 @@ public class FactorsFileTests
             TargetN: 77, Multiplier: 1, ScaledN: 77, DependencyCount: 0,
             Results: new[]
             {
-                new FactorResultRecord("precheck", FactorizationStatus.FactorFound,
-                    GcdMinus: null, GcdPlus: null, Factor1: 7, Factor2: 11, Reason: "small_prime_factor"),
+                FactorResultRecord.FactorFound(
+                    "precheck", targetN: 77, gcdMinus: null, gcdPlus: null,
+                    factor1: 7, factor2: 11, reason: "small_prime_factor"),
             });
 
         var lines = FactorsFile.Write(doc).Split('\n');
@@ -23,9 +24,13 @@ public class FactorsFileTests
         Assert.Equal("# multiplier=1", lines[2]);
         Assert.Equal("# scaled_n=77", lines[3]);
         Assert.Equal("# dependency_count=0", lines[4]);
-        Assert.Equal("# columns=dependency_id,status,gcd_minus,gcd_plus,factor1,factor2,reason", lines[5]);
-        Assert.Equal("dependency_id,status,gcd_minus,gcd_plus,factor1,factor2,reason", lines[6]);
-        Assert.Equal("precheck,factor_found,,,7,11,small_prime_factor", lines[7]);
+        Assert.Equal(
+            "# columns=dependency_id,status,gcd_minus,gcd_plus,factor1,factor2,reason,factor1_composite,factor2_composite",
+            lines[5]);
+        Assert.Equal(
+            "dependency_id,status,gcd_minus,gcd_plus,factor1,factor2,reason,factor1_composite,factor2_composite",
+            lines[6]);
+        Assert.Equal("precheck,factor_found,,,7,11,small_prime_factor,false,false", lines[7]);
     }
 
     [Fact]
@@ -37,7 +42,30 @@ public class FactorsFileTests
         });
 
         var line = FactorsFile.Write(doc).Split('\n')[7];
-        Assert.Equal("0,factor_found,7,11,7,11,", line);
+        Assert.Equal("0,factor_found,7,11,7,11,,,", line);
+    }
+
+    [Fact]
+    public void Marks_composite_factor_when_N_has_three_prime_factors()
+    {
+        // N = 5 * 7 * 11 = 385. A GCD step can legitimately land on the single prime 5,
+        // leaving factor2 = 77 = 7 * 11 composite; nothing about the GCD computation itself
+        // reveals that, so it must be checked explicitly.
+        var row = FactorResultRecord.FactorFound(
+            "0", targetN: 385, gcdMinus: 5, gcdPlus: 77, factor1: 5, factor2: 77);
+
+        Assert.False(row.Factor1IsComposite);
+        Assert.True(row.Factor2IsComposite);
+
+        var line = FactorsFile.Write(new FactorsDocument(385, 1, 385, 1, new[] { row })).Split('\n')[7];
+        Assert.Equal("0,factor_found,5,77,5,77,,false,true", line);
+    }
+
+    [Fact]
+    public void FactorFound_throws_when_factors_do_not_multiply_to_N()
+    {
+        Assert.Throws<InvalidOperationException>(
+            () => FactorResultRecord.FactorFound("0", targetN: 77, gcdMinus: null, gcdPlus: null, factor1: 7, factor2: 12));
     }
 
     [Fact]

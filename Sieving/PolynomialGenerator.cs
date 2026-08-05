@@ -24,7 +24,7 @@ public sealed record PolynomialFamilyBatch(
 /// Generates SIQS polynomials. <see cref="SelectAPositions"/> picks the factor base primes whose
 /// product forms <c>A</c> (ordered by score); <see cref="Family"/> walks the <c>2^s</c> sign
 /// vectors in binary-reflected Gray-code order to produce the <c>B</c> (and hence <c>C</c>) values
-/// for a fixed <c>A</c>. See <c>Instructions/Sieving.md</c>.
+/// for a fixed <c>A</c>.
 /// </summary>
 public static class PolynomialGenerator
 {
