@@ -1,5 +1,7 @@
 # SIQS.NET — a quadratic sieve workbench
 
+[![build](https://github.com/JesHansen/SIQS.NET/actions/workflows/build.yml/badge.svg)](https://github.com/JesHansen/SIQS.NET/actions/workflows/build.yml)
+
 **Factor numbers. Understand how.**
 
 SIQS.NET is an implementation of the **self-initializing quadratic sieve** in modern C# and .NET. It is both a factorization workbench and an explorable implementation of one of the classic general-purpose integer-factorization algorithms. Use it from the command line, drive it through a Blazor web UI, or distribute the sieving phase across other machines you control.
