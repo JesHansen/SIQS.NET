@@ -194,11 +194,13 @@ public class DistributedFactorizationTests : IDisposable
     [Fact]
     public async Task An_active_chunk_upload_outliving_the_lease_ttl_stays_credited_against_a_polling_ui()
     {
+        const int leaseChunkSize = 4;
+
         // Short TTL, so a multi-batch upload can outlast it within the test. Chunk size 4 gives the
         // first slice enough polynomials to yield a useful relation to replay.
         await using var service = new OverlordService(_runsRoot, new OverlordOptions
         {
-            LeaseChunkSize = 4,
+            LeaseChunkSize = leaseChunkSize,
             LeaseTtl = TimeSpan.FromMilliseconds(300),
         });
         service.Submit(new FactorizationRequest(BigInteger.Parse("1022117"))
@@ -221,8 +223,7 @@ public class DistributedFactorizationTests : IDisposable
         }
 
         var context = ClientContext.FromDescriptor(service.Current.Descriptor!);
-        var lease = Assert.IsType<LeaseResponse>(service.TryLease());
-        var relation = SieveUsefulRelations(context, lease, count: 1)[0];
+        var relation = SieveUsefulRelations(context, aStart: 0, aEnd: leaseChunkSize, count: 1)[0];
         var line = JsonSerializer.Serialize(
             RelationUploadCodec.ToUploadRecord(relation), JsonSerializerOptions.Web);
 
@@ -232,6 +233,11 @@ public class DistributedFactorizationTests : IDisposable
         var segments = Enumerable.Range(0, 13).Select(_ => segment).ToArray();
         using var body = new DripStream(segments, TimeSpan.FromMilliseconds(50));
 
+        // Generate the payload before starting the short lease. Relation generation is CPU-heavy and
+        // can exceed the TTL on a busy CI runner, which would reject the upload before this test starts.
+        var lease = Assert.IsType<LeaseResponse>(service.TryLease());
+        Assert.Equal((0, leaseChunkSize), (lease.AStart, lease.AEnd));
+        var upload = service.UploadChunkAsync(lease.JobId, lease.LeaseId, 0, body);
         // The UI polls snapshots throughout; a snapshot sweeps expired leases, so without renewal one
         // of these polls past the 300 ms mark would reclaim the range mid-upload.
         using var pollCts = new CancellationTokenSource();
@@ -244,7 +250,7 @@ public class DistributedFactorizationTests : IDisposable
             }
         });
 
-        var response = await service.UploadChunkAsync(lease.JobId, lease.LeaseId, 0, body);
+        var response = await upload;
         var completion = await service.CompleteLeaseUploadAsync(lease.JobId, lease.LeaseId, 1);
 
         Assert.True(response.Accepted);
@@ -629,8 +635,12 @@ public class DistributedFactorizationTests : IDisposable
 
     private static IReadOnlyList<RawRelationRecord> SieveUsefulRelations(
         ClientContext context, LeaseResponse lease, int count)
+        => SieveUsefulRelations(context, lease.AStart, lease.AEnd, count);
+
+    private static IReadOnlyList<RawRelationRecord> SieveUsefulRelations(
+        ClientContext context, int aStart, int aEnd, int count)
     {
-        var range = new HashSet<int>(Enumerable.Range(lease.AStart, lease.AEnd - lease.AStart));
+        var range = new HashSet<int>(Enumerable.Range(aStart, aEnd - aStart));
         var sink = new InMemoryRawRelationSink();
         SievingEngine.Sieve(context.FactorBase, context.Parameters, sink, null, CancellationToken.None, null, range);
         var useful = sink.FullRelations.Where(relation => relation.ParityColumns.Count > 0).Take(count).ToArray();
