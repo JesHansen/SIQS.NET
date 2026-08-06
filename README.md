@@ -254,6 +254,9 @@ artifacts/
     └── qs
 ```
 
+The latest successful `main` build is also available from the
+[Continuous build release](https://github.com/JesHansen/SIQS.NET/releases/tag/continuous).
+
 Both executables are self-contained, so the target machine does not need the .NET runtime. Select
 specific or additional targets with `-Runtimes`, for example:
 
