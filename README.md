@@ -65,7 +65,7 @@ job J20260805-195827-0001 · 1.9s · artifacts: runs\J20260805-195827-0001
 ```
 
 Small inputs are answered by trial division before the sieve ever starts, so pick something above
-roughly 40 digits if you want to watch the algorithm work.
+roughly 15 digits if you want to watch the algorithm work.
 
 On Linux or macOS the same binary is `./QS/bin/Release/net10.0/qs`. The examples below are written
 for PowerShell because that is where most of the development happens, but nothing in the solution
