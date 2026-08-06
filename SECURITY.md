@@ -30,7 +30,7 @@ Being honest that "run it on a trusted LAN" is a policy rather than a control, h
 - **Verify the client binary out of band.** Compute the digest on the server and check it on each worker before the first run:
 
   ```powershell
-  # on the server, after ./build.ps1
+  # on the server, after publishing SIQS.UI
   Get-FileHash SIQS.UI/download/linux-x64/qs-sieve-client -Algorithm SHA256
 
   # on the worker, after downloading

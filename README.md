@@ -18,7 +18,7 @@ The project is designed to make the algorithm visible without making it toy-size
 - **Factor an integer locally** with the `qs` command-line application or the **Factorize** page.
 - **Watch a live run**: phase status, elapsed time, progress, counters, result, and run artifacts are retained for inspection.
 - **Spread sieving across machines**: the server coordinates work leases while volunteer clients rebuild and verify the same job parameters before sieving.
-- **Download self-contained sieve clients** directly from the distributed UI — **Windows x64** and **Linux x64** are published by default, with **linux-arm64**, **osx-x64**, and **osx-arm64** a build flag away.
+- **Build self-contained sieve clients** from source and serve them directly from the distributed UI.
 - **Compare parameter choices**: every tuning value the sieve has is a command-line option, documented in [docs/tuning.md](docs/tuning.md).
 - **Learn the method** in **Sieve School**, which includes a guided tour, an animated sieve window, topic quizzes, and a historical timeline.
 - **Work on individual pipeline stages** with focused command-line tools for factor-base generation, sieving, filtering, linear algebra, and square-root recovery.
@@ -148,7 +148,7 @@ The **Sieve School** and **History** sections together form an interactive compa
 Start the UI service on a reachable address, submit a distributed job in the browser, then download a client onto each worker. The clients are self-contained: a worker does not need the .NET runtime installed.
 
 > [!IMPORTANT]
-> **The downloadable clients are build output, not source.** A server started with `dotnet run` has never published them, so the download buttons and the `/api/dist/client/...` URLs will report that no client is available. Run `.\build.ps1` (or `dotnet publish SIQS.UI/SIQS.UI.csproj -c Release` and start the published app) first — that is what writes them into `download/` under the content root.
+> **The downloadable clients are build output, not release artifacts.** A server started with `dotnet run` has never published them, so the download buttons and the `/api/dist/client/...` URLs will report that no client is available. Run `dotnet publish SIQS.UI/SIQS.UI.csproj -c Release` and start the published app first — that is what writes them into `download/` under the content root.
 >
 > A worker with a checkout of the repository does not need the download at all:
 >
@@ -191,17 +191,15 @@ The Linux client targets `linux-x64` (x86-64 Linux). It is a self-contained sing
 
 ### arm64 and macOS
 
-The two x64 clients are published by default because they are what most volunteer machines run, and
-because each extra runtime adds a full self-contained publish to the build. Nothing in the sieve is
-x64-only — the AVX2 kernels have scalar fallbacks, which is exactly the path an arm64 or Apple
-silicon machine takes — so the other targets build and run; they are simply not published unless
-asked for:
+Publishing the UI builds Windows x64 and Linux x64 clients. Nothing in the sieve is x64-only — the
+AVX2 kernels have scalar fallbacks, which is exactly the path an arm64 or Apple silicon machine
+takes — so workers for other targets can be built directly from source:
 
 ```powershell
-.\build.ps1 -Runtimes win-x64,linux-x64,linux-arm64,osx-arm64
+dotnet publish QS.SieveClient/QS.SieveClient.csproj -c Release -r linux-arm64 --self-contained true -p:PublishSingleFile=true -o SIQS.UI/download/linux-arm64
 ```
 
-Published clients appear on the **Distributed** page and at `/api/dist/client/<platform>` using the
+Repeat with `osx-x64` or `osx-arm64` as needed. Published clients appear on the **Distributed** page and at `/api/dist/client/<platform>` using the
 slugs `windows-x64`, `linux-x64`, `linux-arm64`, `osx-x64`, and `osx-arm64`. A worker that has the
 .NET SDK can skip the download entirely and run from a checkout:
 
@@ -243,34 +241,24 @@ It performs the following work in order:
 
 1. Cleans the solution's Release output.
 2. Restores and builds the full solution in Release configuration.
-3. Publishes self-contained, single-file distributed clients for `win-x64` and `linux-x64` (override with `-Runtimes`).
-4. Runs the complete test suite.
-5. Publishes the UI application, including the downloadable clients.
+3. Runs the complete test suite.
+4. Publishes self-contained, single-file `qs` command-line tools for Windows x64 and Linux x64.
 
-The published UI is placed at:
+The release artifacts are placed at:
 
 ```text
-SIQS.UI/bin/Release/net10.0/publish/
+artifacts/
+├── windows-x64/
+│   └── qs.exe
+└── linux-x64/
+    └── qs
 ```
 
-On Windows, run the published app with:
+Both executables are self-contained, so the target machine does not need the .NET runtime. Select
+specific or additional targets with `-Runtimes`, for example:
 
 ```powershell
-.\SIQS.UI\bin\Release\net10.0\publish\SIQS.UI.exe --urls "http://0.0.0.0:5078"
-```
-
-The UI host is framework-dependent, so a machine running this package needs the .NET 10 runtime. The downloadable sieve workers are self-contained and do not.
-
-The publish folder contains:
-
-```text
-publish/
-├── SIQS.UI.exe
-└── download/
-    ├── windows-x64/
-    │   └── qs-sieve-client.exe
-    └── linux-x64/
-        └── qs-sieve-client
+.\build.ps1 -Runtimes win-x64
 ```
 
 To skip the test run while iterating on a release package:
@@ -279,11 +267,15 @@ To skip the test run while iterating on a release package:
 .\build.ps1 -SkipTests
 ```
 
-You can also publish the UI project directly. Its publish target prepares both worker binaries before copying them into the deployment package:
+The UI and its downloadable sieve clients are source-built deployment output, not release
+artifacts. Publish them separately when hosting the web application:
 
 ```powershell
 dotnet publish SIQS.UI/SIQS.UI.csproj -c Release
 ```
+
+The framework-dependent UI deployment is written to
+`SIQS.UI/bin/Release/net10.0/publish/` and requires the .NET 10 runtime.
 
 ## Development commands
 

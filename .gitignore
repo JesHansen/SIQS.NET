@@ -20,6 +20,9 @@ Thumbs.db
 TestResults/
 *.trx
 
+# Self-contained command-line release artifacts
+artifacts/
+
 # Run workspaces produced by the pipeline/UI
 runs/
 

@@ -5,10 +5,7 @@ param(
 
     [switch]$SkipTests,
 
-    # Sieve clients to publish. The two x64 targets are the default because they are what most
-    # volunteer machines run and because each extra runtime adds a self-contained publish to the
-    # build. The sieve's AVX2 kernels have scalar fallbacks, so the arm64 and macOS targets build
-    # and run — they are simply not published unless asked for.
+    # Command-line release targets. Windows and Linux x64 are the distributable defaults.
     [ValidateSet("win-x64", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64")]
     [string[]]$Runtimes = @("win-x64", "linux-x64")
 )
@@ -26,9 +23,7 @@ function Invoke-Dotnet {
     }
 }
 
-# The download URL and folder use "windows-x64" where the .NET RID is "win-x64"; every other
-# platform's slug and RID are already the same string. SieveClientCatalog holds the other half of
-# this mapping, and the two must agree or the UI will advertise a file the endpoint cannot find.
+# Use a readable artifact folder name while retaining .NET runtime identifiers for publishing.
 function Get-PlatformSlug {
     param([Parameter(Mandatory)][string]$RuntimeIdentifier)
 
@@ -36,17 +31,22 @@ function Get-PlatformSlug {
     return $RuntimeIdentifier
 }
 
-function Publish-SieveClient {
+function Publish-Qs {
     param(
         [Parameter(Mandatory)][string]$RuntimeIdentifier,
         [Parameter(Mandatory)][string]$OutputDirectory
     )
 
-    Invoke-Dotnet @("restore", "QS.SieveClient/QS.SieveClient.csproj", "-r", $RuntimeIdentifier)
+    if (Test-Path $OutputDirectory) {
+        Remove-Item $OutputDirectory -Recurse -Force
+    }
+
+    Invoke-Dotnet @("restore", "QS/QS.csproj", "-r", $RuntimeIdentifier)
     Invoke-Dotnet @(
-        "publish", "QS.SieveClient/QS.SieveClient.csproj", "-c", $Configuration,
+        "publish", "QS/QS.csproj", "-c", $Configuration,
         "-r", $RuntimeIdentifier, "--self-contained", "true",
         "-p:PublishSingleFile=true", "-p:DebugType=None", "-p:DebugSymbols=false",
+        "-p:GenerateDocumentationFile=false",
         "-o", $OutputDirectory, "--no-restore"
     )
 }
@@ -55,15 +55,10 @@ Invoke-Dotnet @("clean", "SIQS.slnx", "-c", $Configuration)
 Invoke-Dotnet @("restore", "SIQS.slnx")
 Invoke-Dotnet @("build", "SIQS.slnx", "-c", $Configuration, "--no-restore")
 
-# The UI endpoint serves these executables directly. Publish them before the UI package so that the
-# development server and the deployed application offer the same set of client downloads.
-foreach ($runtime in $Runtimes) {
-    Publish-SieveClient -RuntimeIdentifier $runtime -OutputDirectory "SIQS.UI/download/$(Get-PlatformSlug $runtime)"
-}
-
 if (!$SkipTests) {
     Invoke-Dotnet @("test", "--solution", "SIQS.slnx", "-c", $Configuration, "--no-build", "--no-restore")
 }
 
-# UI publishing copies the self-contained distributed sieve client into the deployed application.
-Invoke-Dotnet @("publish", "SIQS.UI/SIQS.UI.csproj", "-c", $Configuration, "--no-restore", "-p:SkipSieveClientPublish=true")
+foreach ($runtime in $Runtimes) {
+    Publish-Qs -RuntimeIdentifier $runtime -OutputDirectory "artifacts/$(Get-PlatformSlug $runtime)"
+}
