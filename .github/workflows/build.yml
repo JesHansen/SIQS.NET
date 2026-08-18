@@ -30,7 +30,7 @@ jobs:
       - name: Run and count the test suite
         shell: pwsh
         run: |
-          $output = @(dotnet test --solution SIQS.slnx -c Release --no-restore 2>&1)
+          $output = @(dotnet test --solution SIQS.slnx -c Release --no-restore --no-ansi 2>&1)
           $exitCode = $LASTEXITCODE
           $output | ForEach-Object { Write-Host $_ }
           if ($exitCode -ne 0) { throw "dotnet test failed with exit code $exitCode." }

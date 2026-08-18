@@ -32,7 +32,7 @@ function Invoke-Dotnet {
 }
 
 function Invoke-TestSuite {
-    $arguments = @("test", "--solution", "SIQS.slnx", "-c", $Configuration, "--no-restore")
+    $arguments = @("test", "--solution", "SIQS.slnx", "-c", $Configuration, "--no-restore", "--no-ansi")
     Write-Host "> dotnet $($arguments -join ' ')" -ForegroundColor Cyan
     $output = @(& dotnet @arguments 2>&1)
     $exitCode = $LASTEXITCODE
