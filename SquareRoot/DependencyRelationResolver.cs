@@ -8,11 +8,13 @@ internal static class DependencyRelationResolver
     public static bool TryResolve(
         IReadOnlyList<string> relationIds,
         IReadOnlyDictionary<string, FilteredRelationRecord> relationsById,
-        out IReadOnlyList<FilteredRelationRecord> relations)
+        out IReadOnlyList<FilteredRelationRecord> relations,
+        CancellationToken cancellationToken = default)
     {
         var resolved = new FilteredRelationRecord[relationIds.Count];
         for (var i = 0; i < relationIds.Count; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!relationsById.TryGetValue(relationIds[i], out var relation))
             {
                 relations = Array.Empty<FilteredRelationRecord>();

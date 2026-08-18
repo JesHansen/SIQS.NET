@@ -68,6 +68,9 @@ public sealed class OverlordJob
     private TimeSpan _uploadGracePeriod;
     private int _sieveGeneration;
     private DiscoveredFactors _factors = DiscoveredFactors.None;
+    private bool _acceptingRequests = true;
+    private CancellationTokenSource _finishCancellation = new();
+    private Task? _finishingTask;
 
     public OverlordJob(string jobId, string targetN, string directory)
     {
@@ -99,6 +102,10 @@ public sealed class OverlordJob
     {
         lock (_gate)
         {
+            _finishCancellation.Cancel();
+            _finishCancellation.Dispose();
+            _finishCancellation = new CancellationTokenSource();
+            _finishingTask = null;
             _descriptor = descriptor;
             _ledger = ledger;
             _ingest = ingest;
@@ -112,6 +119,24 @@ public sealed class OverlordJob
 
         inbox.Start();
         RaiseChanged();
+        if (ingest.UsableCount >= relationTarget)
+        {
+            var generation = 0;
+            lock (_gate)
+            {
+                if (Phase == OverlordPhase.Sieving)
+                {
+                    Phase = OverlordPhase.Draining;
+                    generation = _sieveGeneration;
+                }
+            }
+
+            if (generation != 0)
+            {
+                RaiseChanged();
+                StartFinishAfterInboxDrain(generation, uploadGracePeriod, SieveOutcome.Converged);
+            }
+        }
     }
 
     /// <summary>Completed by durable background ingestion or lease exhaustion; cancelled with the token.</summary>
@@ -129,6 +154,7 @@ public sealed class OverlordJob
         lock (_gate)
         {
             if (Phase != OverlordPhase.Sieving ||
+                !_acceptingRequests ||
                 _ledger is null ||
                 _inbox is null ||
                 !_inbox.CanAcceptLease)
@@ -154,6 +180,7 @@ public sealed class OverlordJob
         lock (_gate)
         {
             if (Phase is not (OverlordPhase.Sieving or OverlordPhase.Draining) ||
+                !_acceptingRequests ||
                 _ledger is null ||
                 _inbox is null ||
                 !_ledger.BeginUpload(leaseId, ttl, DateTimeOffset.UtcNow))
@@ -190,6 +217,7 @@ public sealed class OverlordJob
         lock (_gate)
         {
             if (Phase is not (OverlordPhase.Sieving or OverlordPhase.Draining) ||
+                !_acceptingRequests ||
                 _ledger is null ||
                 _inbox is null ||
                 !_ledger.ProtectPendingIngest(leaseId, DateTimeOffset.UtcNow))
@@ -239,7 +267,7 @@ public sealed class OverlordJob
         RaiseChanged();
         if (startGracePeriod)
         {
-            _ = FinishAfterInboxDrainAsync(generation, _uploadGracePeriod, SieveOutcome.Converged);
+            StartFinishAfterInboxDrain(generation, _uploadGracePeriod, SieveOutcome.Converged);
         }
 
         return result;
@@ -274,6 +302,8 @@ public sealed class OverlordJob
     {
         lock (_gate)
         {
+            _acceptingRequests = false;
+            _finishCancellation.Cancel();
             _factors = factors;
             Phase = OverlordPhase.Completed;
         }
@@ -286,6 +316,8 @@ public sealed class OverlordJob
         TaskCompletionSource<SieveOutcome> completion;
         lock (_gate)
         {
+            _acceptingRequests = false;
+            _finishCancellation.Cancel();
             Phase = OverlordPhase.Faulted;
             Error = error;
             completion = _sieveCompletion;
@@ -336,17 +368,70 @@ public sealed class OverlordJob
         }
 
         RaiseChanged();
-        _ = FinishAfterInboxDrainAsync(generation, TimeSpan.Zero, SieveOutcome.Exhausted);
+        StartFinishAfterInboxDrain(generation, TimeSpan.Zero, SieveOutcome.Exhausted);
+    }
+
+    /// <summary>Closes network admission and joins accepted inbox and delayed drain work.</summary>
+    internal async Task StopAcceptingAndDrainAsync()
+    {
+        DurableRelationInbox? inbox;
+        Task? finishing;
+        lock (_gate)
+        {
+            _acceptingRequests = false;
+            _finishCancellation.Cancel();
+            inbox = _inbox;
+            finishing = _finishingTask;
+        }
+
+        if (inbox is not null)
+        {
+            await inbox.SealAndDrainAsync().ConfigureAwait(false);
+        }
+
+        if (finishing is not null)
+        {
+            await finishing.ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Applies the configured terminal retention policy to transport-only inbox data.</summary>
+    internal Task CleanupInboxAsync(bool retain)
+    {
+        DurableRelationInbox? inbox;
+        lock (_gate)
+        {
+            inbox = _inbox;
+        }
+
+        return inbox?.CleanupAsync(retain) ?? Task.CompletedTask;
+    }
+
+    private void StartFinishAfterInboxDrain(int generation, TimeSpan delay, SieveOutcome outcome)
+    {
+        lock (_gate)
+        {
+            _finishingTask ??= FinishAfterInboxDrainAsync(
+                generation, delay, outcome, _finishCancellation.Token);
+        }
     }
 
     private async Task FinishAfterInboxDrainAsync(
         int generation,
         TimeSpan delay,
-        SieveOutcome outcome)
+        SieveOutcome outcome,
+        CancellationToken cancellationToken)
     {
-        if (delay > TimeSpan.Zero)
+        try
         {
-            await Task.Delay(delay).ConfigureAwait(false);
+            if (delay > TimeSpan.Zero)
+            {
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return;
         }
 
         DurableRelationInbox? inbox;

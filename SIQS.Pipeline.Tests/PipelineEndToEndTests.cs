@@ -93,6 +93,26 @@ public class PipelineEndToEndTests : IDisposable
     }
 
     [Fact]
+    public async Task Large_baillie_psw_positive_short_circuits_as_probable_prime()
+    {
+        var pipeline = new SiqsPipeline();
+        var target = (BigInteger.One << 127) - 1;
+
+        var result = await pipeline.RunAsync(
+            new FactorizationRequest(target)
+            {
+                RunDirectory = _dir,
+                FactorBase = new FactorBaseRunOptions { AllowTinyInputTrialDivision = false },
+            }, null, CancellationToken.None);
+
+        Assert.Equal(JobStatus.CompletedProbablePrime, result.Status);
+        var artifact = await File.ReadAllTextAsync(Path.Combine(_dir, "factors.txt"));
+        Assert.Contains("input_probable_prime", artifact, StringComparison.Ordinal);
+        Assert.Contains("baillie_psw", artifact, StringComparison.Ordinal);
+        Assert.Contains("no proof certificate", artifact, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Fixed_witness_composite_above_the_deterministic_bound_is_factored()
     {
         var target = BigInteger.Parse("3317044064679887385961981");

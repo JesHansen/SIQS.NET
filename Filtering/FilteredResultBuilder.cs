@@ -12,14 +12,19 @@ namespace Filtering;
 internal static class FilteredResultBuilder
 {
     public static FilteringResult Build(
-        FactorBaseMetadata meta, int factorBaseCount, List<Candidate> survivors, FilteringCounters counters)
+        FactorBaseMetadata meta,
+        int factorBaseCount,
+        List<Candidate> survivors,
+        FilteringCounters counters,
+        CancellationToken cancellationToken = default)
     {
-        var columnMap = BuildMatrixColumnMap(survivors, counters);
+        var columnMap = BuildMatrixColumnMap(survivors, counters, cancellationToken);
         var relations = new List<FilteredRelationRecord>(survivors.Count);
         var matrix = new List<SparseMatrixRowRecord>(survivors.Count);
 
         for (var i = 0; i < survivors.Count; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var id = $"F{i:D8}";
             var c = survivors[i];
             var payload = c.LoadPayload();
@@ -55,7 +60,10 @@ internal static class FilteredResultBuilder
         return new FilteringResult(relationsDoc, matrix, matrixMeta, counters);
     }
 
-    private static Dictionary<int, int> BuildMatrixColumnMap(List<Candidate> survivors, FilteringCounters counters)
+    private static Dictionary<int, int> BuildMatrixColumnMap(
+        List<Candidate> survivors,
+        FilteringCounters counters,
+        CancellationToken cancellationToken)
     {
         // Columns with identical row incidence are the same GF(2) constraint stated twice (they
         // arise when overlapping partial cycles share a source partial, planting its rare primes
@@ -67,6 +75,10 @@ internal static class FilteredResultBuilder
         var signatures = new Dictionary<int, (ulong H1, ulong H2, int Weight)>();
         for (var row = 0; row < survivors.Count; row++)
         {
+            if ((row & 0xfff) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
             foreach (var column in survivors[row].Parity)
             {
                 ref var signature = ref CollectionsMarshal.GetValueRefOrAddDefault(signatures, column, out var exists);

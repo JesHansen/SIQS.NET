@@ -12,11 +12,15 @@ internal static class FactorBasePrecheck
     private const long TinyInputTrialDivisionBound = 1_000_000;
     private static readonly IReadOnlyList<long> PrecheckPrimes = PrimeSieve.PrimesUpTo(PrecheckBound);
 
-    public static FactorsDocument? TryFind(BigInteger targetN, bool allowTinyTrialDivision)
+    public static FactorsDocument? TryFind(
+        BigInteger targetN,
+        bool allowTinyTrialDivision,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (targetN == 2)
         {
-            return EarlyFactor.Prime(targetN);
+            return EarlyFactor.Prime(targetN, "exact_trial_division", "n <= 2");
         }
 
         if (targetN.IsEven)
@@ -31,9 +35,10 @@ internal static class FactorBasePrecheck
 
         foreach (var prime in PrecheckPrimes)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (targetN == prime)
             {
-                return EarlyFactor.Prime(targetN);
+                return EarlyFactor.Prime(targetN, "exact_trial_division", $"p <= {PrecheckBound}");
             }
 
             if (targetN % prime == 0)
@@ -45,25 +50,40 @@ internal static class FactorBasePrecheck
         var squareRoot = IntegerMath.Sqrt(targetN);
         if (allowTinyTrialDivision && squareRoot <= TinyInputTrialDivisionBound)
         {
-            foreach (var prime in PrimeSieve.PrimesUpTo((long)squareRoot).Where(prime => prime > PrecheckBound))
+            foreach (var prime in PrimeSieve.PrimesUpTo((long)squareRoot, cancellationToken).Where(prime => prime > PrecheckBound))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (targetN % prime == 0)
                 {
                     return EarlyFactor.Create(targetN, prime, "tiny_input_trial_division");
                 }
             }
 
-            return EarlyFactor.Prime(targetN);
+            return EarlyFactor.Prime(
+                targetN, "exact_trial_division", $"trial division through floor(sqrt(n)) <= {TinyInputTrialDivisionBound}");
         }
 
-        // Baillie-PSW has no known counterexample, so a positive result is trusted as proof of
-        // primality at every input size and terminates the job before any SIQS work begins.
-        if (Primality.IsBailliePswProbablePrime(targetN))
+        cancellationToken.ThrowIfCancellationRequested();
+        if (Primality.IsWithinDeterministicRange(targetN) && Primality.IsProbablePrime(targetN))
         {
-            return EarlyFactor.Prime(targetN);
+            return EarlyFactor.Prime(
+                targetN,
+                "deterministic_miller_rabin_13_witnesses",
+                $"n < {Primality.DeterministicUpperBound}");
         }
 
-        if (TryFindPerfectPowerFactor(targetN, out root))
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!Primality.IsWithinDeterministicRange(targetN) &&
+            Primality.IsBailliePswProbablePrime(targetN))
+        {
+            return EarlyFactor.ProbablePrime(
+                targetN,
+                "baillie_psw",
+                $"n >= {Primality.DeterministicUpperBound}; no proof certificate");
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        if (TryFindPerfectPowerFactor(targetN, cancellationToken, out root))
         {
             return EarlyFactor.Create(targetN, root, "perfect_power");
         }
@@ -71,11 +91,15 @@ internal static class FactorBasePrecheck
         return null;
     }
 
-    private static bool TryFindPerfectPowerFactor(BigInteger targetN, out BigInteger factor)
+    private static bool TryFindPerfectPowerFactor(
+        BigInteger targetN,
+        CancellationToken cancellationToken,
+        out BigInteger factor)
     {
         var bitLength = checked((int)targetN.GetBitLength());
-        foreach (var exponent in PrimeSieve.PrimesUpTo(bitLength).Where(exponent => exponent >= 3))
+        foreach (var exponent in PrimeSieve.PrimesUpTo(bitLength, cancellationToken).Where(exponent => exponent >= 3))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var degree = checked((int)exponent);
             var root = IntegerMath.NthRoot(targetN, degree);
             if (BigInteger.Pow(root, degree) == targetN)
@@ -111,7 +135,19 @@ internal static class EarlyFactor
                     reason: reason),
             ]);
 
-    public static FactorsDocument Prime(BigInteger targetN)
+    public static FactorsDocument Prime(BigInteger targetN, string test, string range)
+        => PrimalityResult(targetN, FactorizationStatus.InputPrime, "input_is_prime", test, range);
+
+    public static FactorsDocument ProbablePrime(BigInteger targetN, string test, string range)
+        => PrimalityResult(
+            targetN, FactorizationStatus.InputProbablePrime, "input_is_probable_prime", test, range);
+
+    private static FactorsDocument PrimalityResult(
+        BigInteger targetN,
+        FactorizationStatus status,
+        string reason,
+        string test,
+        string range)
         => new(
             targetN,
             1,
@@ -121,11 +157,13 @@ internal static class EarlyFactor
             [
                 new FactorResultRecord(
                     DependencyId: "precheck",
-                    Status: FactorizationStatus.InputPrime,
+                    Status: status,
                     GcdMinus: null,
                     GcdPlus: null,
                     Factor1: null,
                     Factor2: null,
-                    Reason: "input_is_prime"),
+                    Reason: reason,
+                    PrimalityTest: test,
+                    PrimalityRange: range),
             ]);
 }

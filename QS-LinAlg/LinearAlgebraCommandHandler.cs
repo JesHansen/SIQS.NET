@@ -19,6 +19,12 @@ internal sealed class LinearAlgebraCommandHandler
         var telemetryPath = cli.GetOptional("telemetry")
             ?? Path.Combine(Path.GetDirectoryName(outPath) ?? ".", "linalg_telemetry.txt");
         var maxDependencies = cli.GetInt("max-dependencies") ?? BlockLanczos.DefaultMaxDependencies;
+        if (maxDependencies is < 1 or > BlockLanczos.MaximumDependencies)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxDependencies),
+                $"Maximum dependencies must be between 1 and {BlockLanczos.MaximumDependencies}.");
+        }
         var requestedParallelism = cli.GetInt("linalg-parallelism") ?? BlockLanczosOptions.DefaultParallelism;
         if (requestedParallelism < 0)
         {
@@ -92,6 +98,8 @@ internal sealed class LinearAlgebraCommandHandler
             ["dependencies"] = dependencies.Length.ToString(CultureInfo.InvariantCulture),
             ["lanczos_runs"] = solve.LanczosRuns.ToString(CultureInfo.InvariantCulture),
             ["lanczos_dependencies"] = solve.LanczosDependencies.ToString(CultureInfo.InvariantCulture),
+            ["lanczos_candidates_extracted"] = solve.LanczosCandidatesExtracted.ToString(CultureInfo.InvariantCulture),
+            ["lanczos_stop_reason"] = solve.StopReason,
             ["lanczos_run_ms"] = Join(solve.LanczosRunMilliseconds),
             ["lanczos_run_dimensions"] = Join(solve.LanczosRunDimensions),
             ["zero_row_dependencies"] = zeroRowDependencies.ToString(CultureInfo.InvariantCulture),

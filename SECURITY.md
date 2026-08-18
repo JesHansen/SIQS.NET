@@ -30,7 +30,7 @@ Being honest that "run it on a trusted LAN" is a policy rather than a control, h
 - **Verify the client binary out of band.** Compute the digest on the server and check it on each worker before the first run:
 
   ```powershell
-  # on the server, after publishing SIQS.UI
+  # on the server, after ./build-ui.ps1
   Get-FileHash SIQS.UI/download/linux-x64/qs-sieve-client -Algorithm SHA256
 
   # on the worker, after downloading
@@ -45,7 +45,8 @@ These are absent, known, and not planned for any particular date. They are liste
 
 - **No shared-secret or token authentication** on the distributed endpoints. A single pre-shared header checked by the server would be cheap and would raise the bar considerably; it is not implemented.
 - **No published digest or signature for the client download.** The server knows the SHA-256 of the file it is serving and does not tell anyone, so a worker cannot verify what it received without an out-of-band channel.
-- **No rate limiting or per-client quotas** beyond the inbox size cap (`Overlord:MaxRelationSpoolBytes`).
+- **No rate limiting or per-client quotas** beyond the raw backlog and total inbox caps
+  (`Overlord:MaxRelationBacklogBytes` and `Overlord:MaxRelationInboxBytes`).
 - **No TLS by default.** HTTPS is available through `launchSettings.json` in development and through a proxy in deployment, but the documented worker commands use `http://`.
 
 Contributions implementing any of these are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).

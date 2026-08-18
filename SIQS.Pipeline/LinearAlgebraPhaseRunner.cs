@@ -30,7 +30,8 @@ internal sealed class LinearAlgebraPhaseRunner
             meta.ColumnCount,
             maxDependencies,
             linalgOptions,
-            PhaseArtifactStore.LinearAlgebraProgressBridge.For(context));
+            PhaseArtifactStore.LinearAlgebraProgressBridge.For(context),
+            context.CancellationToken);
         if (solve.Dependencies.Count == 0)
         {
             throw new InvalidOperationException($"Block Lanczos recovered no verified dependencies after {solve.LanczosRuns} run(s).");
@@ -48,6 +49,8 @@ internal sealed class LinearAlgebraPhaseRunner
                 ["solver"] = solve.Solver,
                 ["lanczos_runs"] = solve.LanczosRuns.ToString(),
                 ["lanczos_dependencies"] = solve.LanczosDependencies.ToString(),
+                ["lanczos_candidates_extracted"] = solve.LanczosCandidatesExtracted.ToString(),
+                ["lanczos_stop_reason"] = solve.StopReason,
                 ["pivots"] = solve.Pivots.ToString(),
                 ["dependencies"] = deps.Length.ToString(),
                 ["linalg_parallelism_requested"] = linalgParallelism.ToString(),

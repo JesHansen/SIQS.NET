@@ -34,6 +34,7 @@ internal sealed class QuietPresenter : IRunPresenter
         {
             JobStatus.CompletedNoFactor => "no non-trivial factor found",
             JobStatus.CompletedPrime => "input is prime",
+            JobStatus.CompletedProbablePrime => "input is a Baillie-PSW probable prime",
             JobStatus.Canceled => "canceled",
             _ when execution.TrialSieve => "trial sieve produced no factors",
             _ => result.ErrorSummary ?? "factorization failed",

@@ -108,6 +108,9 @@ internal sealed class PipelineRunCoordinator
                     return CompleteTrivial(directory, state, phaseIndex, early, currentRequest);
                 if (result.Counters.TryGetValue(CounterKeys.InputIsPrime, out var inputIsPrime) && inputIsPrime == "true")
                     return CompletePrime(directory, state, phaseIndex, currentRequest);
+                if (result.Counters.TryGetValue(CounterKeys.InputIsProbablePrime, out var inputIsProbablePrime) &&
+                    inputIsProbablePrime == "true")
+                    return CompleteProbablePrime(directory, state, phaseIndex, currentRequest);
             }
             if (phase == SiqsPhase.Sieving && currentRequest.TrialSievePercent is not null)
                 return CompleteSieveTrial(directory, state, phaseIndex, currentRequest);
@@ -248,6 +251,15 @@ internal sealed class PipelineRunCoordinator
     {
         for (var i = phaseIndex + 1; i < state.PhaseStates.Count; i++) PhaseStateMachine.Skip(state.PhaseStates[i]);
         JobStateMachine.Completed(state, JobStatus.CompletedPrime, null);
+        _repository.Save(directory, state);
+        return JobResultFactory.BuildResult(state, request, false, 0);
+    }
+
+    private FactorizationJobResult CompleteProbablePrime(
+        string directory, JobState state, int phaseIndex, FactorizationRequest request)
+    {
+        for (var i = phaseIndex + 1; i < state.PhaseStates.Count; i++) PhaseStateMachine.Skip(state.PhaseStates[i]);
+        JobStateMachine.Completed(state, JobStatus.CompletedProbablePrime, null);
         _repository.Save(directory, state);
         return JobResultFactory.BuildResult(state, request, false, 0);
     }

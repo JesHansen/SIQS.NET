@@ -140,7 +140,8 @@
                                             <th>Failed</th>
                                             <th>Accepted relations</th>
                                             <th>Rejected relations</th>
-                                            <th>Inbox bytes / quota</th>
+                                            <th>Raw backlog / quota</th>
+                                            <th>Total inbox / quota</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -151,6 +152,7 @@
                                             <td>@inbox.FailedChunks</td>
                                             <td>@inbox.AcceptedRelations</td>
                                             <td>@inbox.RejectedRelations</td>
+                                            <td>@inbox.RawBacklogBytes / @inbox.MaxRawBacklogBytes</td>
                                             <td>@inbox.DurableBytes / @inbox.MaxDurableBytes</td>
                                         </tr>
                                     </tbody>
@@ -165,6 +167,20 @@
                         else
                         {
                             <p class="muted">No distributed job is active.</p>
+                            @foreach (var recoverable in Overlord.ListRecoverableJobs())
+                            {
+                                <div class="result">
+                                    <strong>@recoverable.JobId</strong> — @recoverable.Status
+                                    @if (recoverable.IsEligible)
+                                    {
+                                        <button type="button" @onclick="() => Recover(recoverable.JobId)">Resume</button>
+                                    }
+                                    else
+                                    {
+                                        <span class="muted">@recoverable.Error</span>
+                                    }
+                                </div>
+                            }
                         }
                     </section>
 
@@ -207,7 +223,7 @@
                                    has none, and a dead download button reads like a broken deployment. *@
                                 <p class="muted">
                                     No sieve clients have been published on this server, so there is nothing to download
-                                    yet. They are build output rather than source: run <code>./build.ps1</code> (or
+                                    yet. They are build output rather than source: run <code>./build-ui.ps1</code> (or
                                     <code>dotnet publish SIQS.UI/SIQS.UI.csproj -c Release</code>) and restart, which
                                     produces the Windows x64 and Linux x64 workers. Add
                                     <code>-Runtimes linux-arm64,osx-arm64</code> for other platforms.
@@ -287,6 +303,19 @@
         }
 
         _errors = errors;
+    }
+
+    private void Recover(string jobId)
+    {
+        try
+        {
+            Overlord.Recover(jobId);
+            _errors = Array.Empty<string>();
+        }
+        catch (Exception ex)
+        {
+            _errors = new[] { ex.Message };
+        }
     }
 
     private static long? ParseLong(string value) => long.TryParse(value?.Trim(), out var v) ? v : null;

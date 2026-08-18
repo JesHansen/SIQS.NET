@@ -25,11 +25,13 @@ public sealed class SiqsPipeline : ISiqsPipeline
     private readonly JobStateRepository _stateRepository = new();
     private readonly ResumePlanner _resumePlanner = new();
     private readonly PipelineRunCoordinator _coordinator;
+    private readonly TerminalStateReconciler _terminalReconciler;
 
     public SiqsPipeline(IPhaseExecutor? executor = null)
     {
         _executor = executor ?? new RealPhaseExecutor();
         _coordinator = new PipelineRunCoordinator(_executor, _stateRepository);
+        _terminalReconciler = new TerminalStateReconciler(_stateRepository);
     }
 
     public FactorizationRequest NormalizeAndValidate(FactorizationRequest request)
@@ -102,13 +104,28 @@ public sealed class SiqsPipeline : ISiqsPipeline
         }
 
         PhaseSequence.EnsureStateOrder(state);
-        if (state.Parameters.TryGetValue(RunParameterKeys.TrialSievePercent, out var trial)
-            && !trial.Equals("off", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Trial-sieve jobs cannot be resumed because A-index checkpoint semantics do not apply.");
-
         var storedRequest = NormalizeAndValidate(StoredParameterReader.BuildRequest(state, jobDirectory));
         ResumeOverrideValidator.Validate(state, storedRequest, overrides);
-        if (IsCompleted(state.Status)) return _coordinator.BuildStoredResult(state, storedRequest);
+        var isTrialSieve = state.Parameters.TryGetValue(RunParameterKeys.TrialSievePercent, out var trial)
+            && !trial.Equals("off", StringComparison.OrdinalIgnoreCase);
+        if (IsCompleted(state.Status))
+        {
+            if (isTrialSieve)
+            {
+                throw new InvalidOperationException(
+                    "Trial-sieve jobs cannot be resumed because A-index checkpoint semantics do not apply.");
+            }
+
+            return _coordinator.BuildStoredResult(state, storedRequest);
+        }
+
+        if (_terminalReconciler.TryReconcile(jobDirectory, state, storedRequest))
+        {
+            return _coordinator.BuildStoredResult(state, storedRequest);
+        }
+
+        if (isTrialSieve)
+            throw new InvalidOperationException("Trial-sieve jobs cannot be resumed because A-index checkpoint semantics do not apply.");
 
         var resumeIndex = _resumePlanner.FindResumePoint(jobDirectory, state, storedRequest);
         if (resumeIndex >= PhaseSequence.All.Length) return _coordinator.BuildStoredResult(state, storedRequest);
@@ -126,7 +143,7 @@ public sealed class SiqsPipeline : ISiqsPipeline
     }
 
     private static bool IsCompleted(JobStatus status)
-        => status is JobStatus.CompletedNoFactor or JobStatus.CompletedPrime
+        => status is JobStatus.CompletedNoFactor or JobStatus.CompletedPrime or JobStatus.CompletedProbablePrime
             or JobStatus.CompletedFactorFound or JobStatus.CompletedTrivialFactor;
 
     private static string Now() => DateTimeOffset.UtcNow.ToString("O");

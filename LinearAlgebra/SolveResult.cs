@@ -8,4 +8,6 @@ public sealed record SolveResult(
     int LanczosRuns = 0,
     int LanczosDependencies = 0,
     IReadOnlyList<long>? LanczosRunMilliseconds = null,
-    IReadOnlyList<int>? LanczosRunDimensions = null);
+    IReadOnlyList<int>? LanczosRunDimensions = null,
+    int LanczosCandidatesExtracted = 0,
+    string StopReason = "not-started");

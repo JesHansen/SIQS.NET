@@ -20,13 +20,20 @@ public sealed class LeaseLedger
     private int _cursor;
     private int _completed;
     private long _leaseSeq;
+    private readonly LeaseJournal? _journal;
 
-    public LeaseLedger(int aCount, int chunkSize)
+    public LeaseLedger(int aCount, int chunkSize, string? jobDirectory = null)
     {
         if (aCount < 0) throw new ArgumentOutOfRangeException(nameof(aCount));
         if (chunkSize < 1) throw new ArgumentOutOfRangeException(nameof(chunkSize));
         _aCount = aCount;
         _chunkSize = chunkSize;
+        if (jobDirectory is not null)
+        {
+            _journal = new LeaseJournal(jobDirectory);
+            Restore(_journal.Load());
+            Persist();
+        }
     }
 
     public sealed record Lease(
@@ -69,6 +76,7 @@ public sealed class LeaseLedger
 
             var lease = new Lease($"L{Interlocked.Increment(ref _leaseSeq):D8}", range.Start, range.End, now + ttl);
             _outstanding[lease.LeaseId] = lease;
+            Persist();
             return lease;
         }
     }
@@ -85,6 +93,7 @@ public sealed class LeaseLedger
             }
 
             _completed = Math.Min(_aCount, _completed + (lease.End - lease.Start));
+            Persist();
             return true;
         }
     }
@@ -100,6 +109,7 @@ public sealed class LeaseLedger
             }
 
             _reclaimed.Enqueue((lease.Start, lease.End));
+            Persist();
             return true;
         }
     }
@@ -123,6 +133,7 @@ public sealed class LeaseLedger
                 ExpiresUtc = now + ttl,
                 ActiveUploads = checked(lease.ActiveUploads + 1),
             };
+            Persist();
             return true;
         }
     }
@@ -142,6 +153,7 @@ public sealed class LeaseLedger
                 ExpiresUtc = now + ttl,
                 ActiveUploads = Math.Max(0, lease.ActiveUploads - 1),
             };
+            Persist();
         }
     }
 
@@ -160,6 +172,7 @@ public sealed class LeaseLedger
             }
 
             _outstanding[leaseId] = lease with { PendingIngest = true };
+            Persist();
             return true;
         }
     }
@@ -176,6 +189,7 @@ public sealed class LeaseLedger
                     PendingIngest = false,
                     ExpiresUtc = now + ttl,
                 };
+                Persist();
             }
         }
     }
@@ -194,6 +208,7 @@ public sealed class LeaseLedger
             }
 
             _reclaimed.Enqueue((lease.Start, lease.End));
+            Persist();
             return true;
         }
     }
@@ -214,6 +229,7 @@ public sealed class LeaseLedger
             }
 
             _outstanding[leaseId] = lease with { ExpiresUtc = now + ttl };
+            Persist();
             return true;
         }
     }
@@ -250,14 +266,60 @@ public sealed class LeaseLedger
             return;
         }
 
+        var changed = false;
         foreach (var lease in _outstanding.Values
                      .Where(lease => lease.ActiveUploads == 0 && !lease.PendingIngest && lease.ExpiresUtc <= now)
                      .ToArray())
         {
             _outstanding.Remove(lease.LeaseId);
             _reclaimed.Enqueue((lease.Start, lease.End));
+            changed = true;
+        }
+
+        if (changed) Persist();
+    }
+
+    private void Restore(LeaseJournalState? state)
+    {
+        if (state is null) return;
+        if (state.ACount != _aCount || state.ChunkSize != _chunkSize)
+        {
+            throw new InvalidOperationException(
+                "The persisted lease journal does not match the recovered A-domain configuration.");
+        }
+
+        _cursor = state.Cursor;
+        _completed = state.Completed;
+        _leaseSeq = state.LeaseSequence;
+        foreach (var range in state.Reclaimed)
+        {
+            _reclaimed.Enqueue((range.Start, range.End));
+        }
+
+        // A process restart terminates active HTTP uploads. Reclaim those known ranges; leases with
+        // a durable completion marker remain protected until inbox replay completes them.
+        foreach (var lease in state.Outstanding)
+        {
+            if (lease.PendingIngest)
+            {
+                _outstanding[lease.LeaseId] = lease with { ActiveUploads = 0 };
+            }
+            else
+            {
+                _reclaimed.Enqueue((lease.Start, lease.End));
+            }
         }
     }
+
+    private void Persist()
+        => _journal?.Save(new LeaseJournalState(
+            _aCount,
+            _chunkSize,
+            _cursor,
+            _completed,
+            _leaseSeq,
+            _outstanding.Values.OrderBy(lease => lease.LeaseId, StringComparer.Ordinal).ToArray(),
+            _reclaimed.Select(range => new LeaseRange(range.Start, range.End)).ToArray()));
 
     private static int RangeLength(Queue<(int Start, int End)> ranges)
         => ranges.Sum(r => r.End - r.Start);

@@ -21,13 +21,15 @@ public static class FilteringEngine
         IEnumerable<RawRelationRecord> fullRelations,
         IEnumerable<RawRelationRecord> partials,
         FilteringOptions? options = null,
-        IProgress<SiqsProgressEvent>? progress = null)
+        IProgress<SiqsProgressEvent>? progress = null,
+        CancellationToken cancellationToken = default)
         => Run(
             factorBase,
             new BufferedRawRelationSource(fullRelations),
             new BufferedRawRelationSource(partials),
             options,
-            progress);
+            progress,
+            cancellationToken);
 
     /// <summary>Runs filtering over re-readable record sources (multi-pass, low retention).</summary>
     public static FilteringResult Run(
@@ -35,8 +37,10 @@ public static class FilteringEngine
         IRawRelationSource fullRelations,
         IRawRelationSource partials,
         FilteringOptions? options = null,
-        IProgress<SiqsProgressEvent>? progress = null)
+        IProgress<SiqsProgressEvent>? progress = null,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         options ??= new FilteringOptions();
         var meta = factorBase.Metadata;
         var factorBaseCount = factorBase.Entries.Count;
@@ -52,6 +56,7 @@ public static class FilteringEngine
 
         foreach (var (_, full) in fullRelations.Enumerate())
         {
+            cancellationToken.ThrowIfCancellationRequested();
             counters.RawFull++;
             RelationValidation.ValidateColumns(full.FactorExponents, factorBaseCount);
             RelationValidation.ValidateDeclaredParity(full);
@@ -59,7 +64,7 @@ public static class FilteringEngine
         }
 
         candidates.AddRange(PartialCycleCombiner.Combine(
-            partials, meta.ScaledN, meta.Bound, factorBaseCount, options, counters, store));
+            partials, meta.ScaledN, meta.Bound, factorBaseCount, options, counters, store, cancellationToken));
 
         // Output ordering: full relations by raw id, then combined partials by candidate key.
         var ordered = candidates
@@ -67,42 +72,45 @@ public static class FilteringEngine
             .ThenBy(c => c.OrderKey, StringComparer.Ordinal)
             .ToList();
 
-        var deduped = CandidateReducer.RemoveDuplicates(ordered, counters);
-        CandidateReducer.RecordPrePruningTelemetry(deduped, factorBaseCount, counters);
-        var survivors = CandidateReducer.PruneSingletons(deduped, factorBaseCount, counters);
+        var deduped = CandidateDuplicateRemover.RemoveDuplicates(ordered, counters, cancellationToken);
+        CandidateReductionTelemetry.RecordPrePruningTelemetry(deduped, factorBaseCount, counters, cancellationToken);
+        var survivors = CandidateSingletonPruner.PruneSingletons(deduped, factorBaseCount, counters, cancellationToken);
         if (options.EnableTwoMerge)
         {
             while (true)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var mergesBefore = counters.TwoMerges;
-                survivors = CandidateReducer.MergeWeightTwoColumns(
-                    survivors, factorBaseCount, meta.ScaledN, options.TwoMergeSlack, counters);
+                survivors = CandidateWeightTwoMerger.MergeWeightTwoColumns(
+                    survivors, factorBaseCount, meta.ScaledN, options.TwoMergeSlack, counters, cancellationToken);
                 if (counters.TwoMerges == mergesBefore)
                 {
                     break;
                 }
 
-                survivors = CandidateReducer.PruneSingletons(survivors, factorBaseCount, counters);
+                survivors = CandidateSingletonPruner.PruneSingletons(survivors, factorBaseCount, counters, cancellationToken);
             }
         }
 
-        CandidateReducer.RecordRowWeightTelemetry(survivors, beforeTrim: true, counters);
+        CandidateReductionTelemetry.RecordRowWeightTelemetry(survivors, beforeTrim: true, counters, cancellationToken);
 
         while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var surplusRowsTrimmedBefore = counters.SurplusRowsTrimmed;
-            survivors = CandidateReducer.TrimHeavyRows(survivors, factorBaseCount, options, counters);
+            survivors = CandidateRowTrimmer.TrimHeavyRows(survivors, factorBaseCount, options, counters, cancellationToken);
             if (counters.SurplusRowsTrimmed == surplusRowsTrimmedBefore)
             {
                 break;
             }
 
-            survivors = CandidateReducer.PruneSingletons(survivors, factorBaseCount, counters);
+            survivors = CandidateSingletonPruner.PruneSingletons(survivors, factorBaseCount, counters, cancellationToken);
         }
 
-        CandidateReducer.RecordRowWeightTelemetry(survivors, beforeTrim: false, counters);
+        CandidateReductionTelemetry.RecordRowWeightTelemetry(survivors, beforeTrim: false, counters, cancellationToken);
 
-        var result = FilteredResultBuilder.Build(meta, factorBaseCount, survivors, counters);
+        var result = FilteredResultBuilder.Build(meta, factorBaseCount, survivors, counters, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         FilteringProgressReporter.Report(progress, "filtering complete", counters);
         return result;
     }

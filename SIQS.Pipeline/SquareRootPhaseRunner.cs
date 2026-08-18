@@ -16,7 +16,8 @@ internal sealed class SquareRootPhaseRunner
             relations,
             dependencies,
             new SquareRootOptions(context.Request.SquareRoot.ContinueAfterFactor),
-            context.Progress);
+            context.Progress,
+            context.CancellationToken);
 
         PhaseArtifactStore.Write(context, "factors.txt", FactorsFile.Write(result.Factors));
         var factor = result.Factor1 is { } f1 && result.Factor2 is { } f2

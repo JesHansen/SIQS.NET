@@ -24,7 +24,8 @@ internal sealed class FilteringPhaseRunner
             LargePrime2Bound: partialMetadata?.LargePrime2Bound,
             SpillDirectory: spillDirectory,
             EnableTwoMerge: true);
-        var result = FilteringEngine.Run(factorBase, fulls, partials, options, context.Progress);
+        var result = FilteringEngine.Run(
+            factorBase, fulls, partials, options, context.Progress, context.CancellationToken);
 
         PhaseArtifactStore.Write(context, "relations_filtered.txt",
             FilteredRelationsFile.Write(result.Relations, PhaseArtifactStore.FilteredRelationsFormat(result.Relations)));

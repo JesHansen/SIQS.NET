@@ -14,7 +14,7 @@ internal sealed class FactorBasePhaseRunner
             request.FactorBase.Bound,
             request.FactorBase.Multiplier,
             request.FactorBase.AllowTinyInputTrialDivision);
-        var result = FactorBaseGenerator.Generate(options, context.Progress);
+        var result = FactorBaseGenerator.Generate(options, context.Progress, context.CancellationToken);
 
         if (result.HasEarlyOutcome)
         {
@@ -28,6 +28,16 @@ internal sealed class FactorBasePhaseRunner
                     {
                         ["reason"] = row.Reason ?? string.Empty,
                         [CounterKeys.InputIsPrime] = CounterFormat.Bool(true),
+                    });
+            }
+
+            if (row.Status == FactorizationStatus.InputProbablePrime)
+            {
+                return PhaseResult.Completed(SiqsPhase.FactorBase, ["factors.txt"],
+                    new Dictionary<string, string>
+                    {
+                        ["reason"] = row.Reason ?? string.Empty,
+                        [CounterKeys.InputIsProbablePrime] = CounterFormat.Bool(true),
                     });
             }
 

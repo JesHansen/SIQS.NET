@@ -19,7 +19,36 @@ internal static class PhaseArtifactStore
         => ArtifactFileIO.ReadAllText(Path.Combine(context.JobDirectory, name));
 
     internal static void Write(PhaseContext context, string name, string content)
-        => File.WriteAllText(Path.Combine(context.JobDirectory, name), content);
+    {
+        context.CancellationToken.ThrowIfCancellationRequested();
+        var path = Path.Combine(context.JobDirectory, name);
+        var temporaryPath = path + $".{Guid.NewGuid():N}.tmp";
+        try
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(content);
+            using (var stream = new FileStream(
+                temporaryPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                bufferSize: 64 * 1024,
+                FileOptions.WriteThrough))
+            {
+                stream.Write(bytes);
+                stream.Flush(flushToDisk: true);
+            }
+
+            context.CancellationToken.ThrowIfCancellationRequested();
+            File.Move(temporaryPath, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
+        }
+    }
 
     internal static IRawRelationSource RawRelationSource(
         string jobDirectory,

@@ -17,8 +17,11 @@ public static class CounterKeys
     /// <summary>Approximate usable-relation count emitted by sieving; read by the top-up planner.</summary>
     public const string UsableRelations = "usable_relations";
 
-    /// <summary>Set to <c>"true"</c> by the factor-base phase when the input is prime; read to short-circuit.</summary>
+    /// <summary>Set when deterministic work proves the input prime; read to short-circuit.</summary>
     public const string InputIsPrime = "input_is_prime";
+
+    /// <summary>Set when Baillie-PSW classifies a larger input as probable prime.</summary>
+    public const string InputIsProbablePrime = "input_is_probable_prime";
 
     /// <summary>Number of dependencies the square-root phase attempted; read into the job result.</summary>
     public const string DependenciesAttempted = "dependencies_attempted";

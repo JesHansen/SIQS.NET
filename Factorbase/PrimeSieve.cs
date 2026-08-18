@@ -4,7 +4,7 @@ namespace Factorbase;
 public static class PrimeSieve
 {
     /// <summary>Returns all primes <c>p</c> with <c>2 &lt;= p &lt;= bound</c> in ascending order.</summary>
-    public static IReadOnlyList<long> PrimesUpTo(long bound)
+    public static IReadOnlyList<long> PrimesUpTo(long bound, CancellationToken cancellationToken = default)
     {
         if (bound < 2)
         {
@@ -16,6 +16,11 @@ public static class PrimeSieve
 
         for (long i = 2; i <= bound; i++)
         {
+            if ((i & 0x3fff) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
             if (composite[i])
             {
                 continue;
@@ -28,6 +33,7 @@ public static class PrimeSieve
             }
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         return primes;
     }
 }

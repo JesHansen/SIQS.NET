@@ -45,7 +45,7 @@ Sieving
   --cofactor-splitter <kind>      squfof | squfof-rho | micro-ecm-squfof | micro-ecm-stage2
 
 Linear algebra
-  --max-dependencies <n>          cap on the null-space vectors to extract
+  --max-dependencies <n>          cap (1..64) within one successful Lanczos block
   --linalg-parallelism <n>        Block Lanczos threads; 0 uses every core
 
 Square root
@@ -82,7 +82,8 @@ try
     var result = execution.Result;
     return execution.TrialSieve ? 0
         : result.Status is JobStatus.CompletedFactorFound or JobStatus.CompletedTrivialFactor ? 0
-        : result.Status is JobStatus.CompletedNoFactor or JobStatus.CompletedPrime ? 2 : 1;
+        : result.Status is JobStatus.CompletedNoFactor or JobStatus.CompletedPrime or
+            JobStatus.CompletedProbablePrime ? 2 : 1;
 }
 catch (Exception ex) when (ex is FormatException or ArgumentException or InvalidOperationException
     or IOException or UnauthorizedAccessException or System.Text.Json.JsonException)

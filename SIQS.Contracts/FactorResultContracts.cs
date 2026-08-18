@@ -13,7 +13,9 @@ public sealed record FactorResultRecord(
     BigInteger? Factor2,
     string? Reason,
     bool? Factor1IsComposite = null,
-    bool? Factor2IsComposite = null)
+    bool? Factor2IsComposite = null,
+    string? PrimalityTest = null,
+    string? PrimalityRange = null)
 {
     /// <summary>
     /// Builds a <see cref="FactorizationStatus.FactorFound"/> row, asserting the factor pair

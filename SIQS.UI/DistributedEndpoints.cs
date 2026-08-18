@@ -1,5 +1,5 @@
 using System.Numerics;
-using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Http.Features;
 using SIQS.Contracts.Distributed;
 using SIQS.Overlord;
 using SIQS.Pipeline;
@@ -41,16 +41,44 @@ internal static class DistributedEndpoints
         group.MapPost("/lease", (int? parallelism, OverlordService overlord)
             => overlord.TryLease(parallelism) is { } lease ? Results.Ok(lease) : Results.NoContent());
 
-        group.MapPost("/relations/{jobId}/{leaseId}/{sequence:long}", async (
+        group.MapPost("/relations/{jobId}/{leaseId}/{sequence:long}", async Task<IResult> (
                 string jobId,
                 string leaseId,
                 long sequence,
                 HttpRequest request,
                 OverlordService overlord,
-                CancellationToken cancellationToken)
-            => Results.Ok(await overlord.UploadChunkAsync(
-                jobId, leaseId, sequence, request.Body, cancellationToken)))
-            .WithMetadata(new DisableRequestSizeLimitAttribute());
+                CancellationToken cancellationToken) =>
+            {
+                const long transportMarginBytes = 64 * 1024;
+                var transportLimit = overlord.MaxRelationChunkBytes > long.MaxValue - transportMarginBytes
+                    ? long.MaxValue
+                    : overlord.MaxRelationChunkBytes + transportMarginBytes;
+                var sizeFeature = request.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>();
+                if (sizeFeature is { IsReadOnly: false })
+                {
+                    sizeFeature.MaxRequestBodySize = transportLimit;
+                }
+
+                if (request.ContentLength > overlord.MaxRelationChunkBytes)
+                {
+                    return Results.Problem(
+                        statusCode: StatusCodes.Status413PayloadTooLarge,
+                        detail: $"Relation chunks cannot exceed {overlord.MaxRelationChunkBytes} bytes.");
+                }
+
+                var mediaType = request.ContentType?.Split(';', 2)[0].Trim();
+                if (!string.Equals(mediaType, "application/x-ndjson", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(mediaType, "application/ndjson", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Results.Problem(
+                        statusCode: StatusCodes.Status415UnsupportedMediaType,
+                        detail: "Relation chunks must use application/x-ndjson.");
+                }
+
+                var response = await overlord.UploadChunkAsync(
+                    jobId, leaseId, sequence, request.Body, cancellationToken).ConfigureAwait(false);
+                return Results.Ok(response);
+            });
 
         group.MapPost("/relations/{jobId}/{leaseId}/complete", async (
                 string jobId,
@@ -63,6 +91,33 @@ internal static class DistributedEndpoints
 
         group.MapGet("/status", (OverlordService overlord)
             => overlord.Snapshot() is { } snapshot ? Results.Ok(snapshot) : Results.NoContent());
+
+        group.MapGet("/recoverable", (OverlordService overlord)
+            => Results.Ok(overlord.ListRecoverableJobs()));
+
+        group.MapPost("/recover/{jobId}", (string jobId, OverlordService overlord) =>
+        {
+            try
+            {
+                overlord.Recover(jobId);
+                return Results.Ok(overlord.Snapshot());
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(ex.Message);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Conflict(ex.Message);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FormatException)
+            {
+                return Results.Problem(
+                    title: "Distributed recovery state is invalid",
+                    detail: ex.Message,
+                    statusCode: StatusCodes.Status422UnprocessableEntity);
+            }
+        });
 
         group.MapGet("/client", (SieveClientCatalog clients) => ClientDownload(SieveClientCatalog.Default.Platform, clients));
         group.MapGet("/client/{platform}", (string platform, SieveClientCatalog clients) => ClientDownload(platform, clients));
@@ -92,13 +147,25 @@ internal static class DistributedEndpoints
             }
             catch (Exception ex) when (ex is FormatException or ArgumentException)
             {
-                return Results.BadRequest($"Invalid request: {ex.Message}");
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["request"] = [$"Invalid request: {ex.Message}"],
+                });
             }
 
             try
             {
                 overlord.Submit(request);
                 return Results.Ok(overlord.Snapshot());
+            }
+            catch (FactorizationRequestValidationException ex)
+            {
+                return Results.ValidationProblem(ex.Issues
+                    .GroupBy(issue => issue.Field, StringComparer.Ordinal)
+                    .ToDictionary(
+                        group => group.Key,
+                        group => group.Select(issue => issue.Message).ToArray(),
+                        StringComparer.Ordinal));
             }
             catch (InvalidOperationException ex)
             {
@@ -128,7 +195,7 @@ internal static class DistributedEndpoints
         var available = clients.Published;
         return Results.NotFound(
             $"No {client.DisplayName} client has been published on this server. "
-            + "The sieve clients are build output: run `./build.ps1` (or `dotnet publish "
+            + "The sieve clients are build output: run `./build-ui.ps1` (or `dotnet publish "
             + $"SIQS.UI/SIQS.UI.csproj -c Release`) to produce them, adding `-Runtimes {client.RuntimeIdentifier}` "
             + "for a platform outside the default set. "
             + (available.Count > 0

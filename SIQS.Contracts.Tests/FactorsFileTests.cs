@@ -25,12 +25,12 @@ public class FactorsFileTests
         Assert.Equal("# scaled_n=77", lines[3]);
         Assert.Equal("# dependency_count=0", lines[4]);
         Assert.Equal(
-            "# columns=dependency_id,status,gcd_minus,gcd_plus,factor1,factor2,reason,factor1_composite,factor2_composite",
+            "# columns=dependency_id,status,gcd_minus,gcd_plus,factor1,factor2,reason,factor1_composite,factor2_composite,primality_test,primality_range",
             lines[5]);
         Assert.Equal(
-            "dependency_id,status,gcd_minus,gcd_plus,factor1,factor2,reason,factor1_composite,factor2_composite",
+            "dependency_id,status,gcd_minus,gcd_plus,factor1,factor2,reason,factor1_composite,factor2_composite,primality_test,primality_range",
             lines[6]);
-        Assert.Equal("precheck,factor_found,,,7,11,small_prime_factor,false,false", lines[7]);
+        Assert.Equal("precheck,factor_found,,,7,11,small_prime_factor,false,false,,", lines[7]);
     }
 
     [Fact]
@@ -42,7 +42,7 @@ public class FactorsFileTests
         });
 
         var line = FactorsFile.Write(doc).Split('\n')[7];
-        Assert.Equal("0,factor_found,7,11,7,11,,,", line);
+        Assert.Equal("0,factor_found,7,11,7,11,,,,,", line);
     }
 
     [Fact]
@@ -58,7 +58,7 @@ public class FactorsFileTests
         Assert.True(row.Factor2IsComposite);
 
         var line = FactorsFile.Write(new FactorsDocument(385, 1, 385, 1, new[] { row })).Split('\n')[7];
-        Assert.Equal("0,factor_found,5,77,5,77,,false,true", line);
+        Assert.Equal("0,factor_found,5,77,5,77,,false,true,,", line);
     }
 
     [Fact]
@@ -96,5 +96,26 @@ public class FactorsFileTests
         var found = doc.Results.FirstOrDefault(r => r.Status == FactorizationStatus.FactorFound);
         Assert.NotNull(found);
         Assert.Equal(new BigInteger(7), found!.Factor1);
+    }
+
+    [Fact]
+    public void Reads_legacy_input_prime_row_without_new_primality_columns()
+    {
+        const string legacy = """
+            # format=siqs-factors-v1
+            # target_n=97
+            # multiplier=1
+            # scaled_n=97
+            # dependency_count=0
+            # columns=dependency_id,status,gcd_minus,gcd_plus,factor1,factor2,reason,factor1_composite,factor2_composite
+            dependency_id,status,gcd_minus,gcd_plus,factor1,factor2,reason,factor1_composite,factor2_composite
+            precheck,input_prime,,,,,input_is_prime,,
+            """;
+
+        var row = Assert.Single(FactorsFile.Parse(legacy).Results);
+
+        Assert.Equal(FactorizationStatus.InputPrime, row.Status);
+        Assert.Null(row.PrimalityTest);
+        Assert.Null(row.PrimalityRange);
     }
 }

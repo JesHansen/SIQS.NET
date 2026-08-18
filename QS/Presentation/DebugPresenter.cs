@@ -41,6 +41,10 @@ internal sealed class DebugPresenter : IRunPresenter
         {
             Console.WriteLine($"  {execution.Target} is prime.");
         }
+        else if (result.Status == JobStatus.CompletedProbablePrime)
+        {
+            Console.WriteLine($"  {execution.Target} is a Baillie-PSW probable prime.");
+        }
         else if (result.Status == JobStatus.Canceled)
         {
             Console.WriteLine("  Canceled.");

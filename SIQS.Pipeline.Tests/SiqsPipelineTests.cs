@@ -34,7 +34,7 @@ public class SiqsPipelineTests : IDisposable
     public void NormalizeAndValidate_rejects_n_le_1()
     {
         var pipeline = new SiqsPipeline(new FakePhaseExecutor());
-        Assert.Throws<ArgumentOutOfRangeException>(() => pipeline.NormalizeAndValidate(new FactorizationRequest(1)));
+        Assert.ThrowsAny<ArgumentOutOfRangeException>(() => pipeline.NormalizeAndValidate(new FactorizationRequest(1)));
     }
 
     [Fact]
@@ -58,17 +58,17 @@ public class SiqsPipelineTests : IDisposable
     {
         var pipeline = new SiqsPipeline(new FakePhaseExecutor());
 
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
+        Assert.ThrowsAny<ArgumentOutOfRangeException>(() =>
             pipeline.NormalizeAndValidate(new FactorizationRequest(BigInteger.Parse("1022117"))
             {
                 Sieving = new SievingRunOptions { Parallelism = -1 },
             }));
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
+        Assert.ThrowsAny<ArgumentOutOfRangeException>(() =>
             pipeline.NormalizeAndValidate(new FactorizationRequest(BigInteger.Parse("1022117"))
             {
                 Sieving = new SievingRunOptions { BlockSize = -1 },
             }));
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
+        Assert.ThrowsAny<ArgumentOutOfRangeException>(() =>
             pipeline.NormalizeAndValidate(new FactorizationRequest(BigInteger.Parse("1022117"))
             {
                 LinearAlgebra = new LinearAlgebraRunOptions { Parallelism = -1 },
@@ -80,7 +80,7 @@ public class SiqsPipelineTests : IDisposable
     {
         var pipeline = new SiqsPipeline(new FakePhaseExecutor());
 
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
+        Assert.ThrowsAny<ArgumentOutOfRangeException>(() =>
             pipeline.NormalizeAndValidate(new FactorizationRequest(BigInteger.Parse("1022117"))
             {
                 Sieving = new SievingRunOptions { CofactorSplitter = "bad" },
@@ -229,7 +229,7 @@ public class SiqsPipelineTests : IDisposable
                 LargePrime2ThresholdBound = 1_500_000,
                 CofactorSplitter = "squfof-rho",
             },
-            LinearAlgebra = new LinearAlgebraRunOptions { MaxDependencies = 128, Parallelism = 4 },
+            LinearAlgebra = new LinearAlgebraRunOptions { MaxDependencies = 64, Parallelism = 4 },
         };
 
         await pipeline.RunAsync(request, null, CancellationToken.None);
@@ -418,6 +418,32 @@ public class SiqsPipelineTests : IDisposable
 
         Assert.Equal(JobStatus.Canceled, result.Status);
         Assert.Empty(fake.Calls);
+    }
+
+    [Theory]
+    [InlineData(SiqsPhase.FactorBase)]
+    [InlineData(SiqsPhase.Sieving)]
+    [InlineData(SiqsPhase.Filtering)]
+    [InlineData(SiqsPhase.LinearAlgebra)]
+    [InlineData(SiqsPhase.SquareRoot)]
+    public async Task Cancellation_after_phase_work_begins_is_resumable(SiqsPhase phase)
+    {
+        var directory = RunDir($"cancel-{phase}");
+        var fake = new FakePhaseExecutor { CancelAt = phase };
+        var pipeline = new SiqsPipeline(fake);
+
+        var canceled = await pipeline.RunAsync(Request(91, directory), null, CancellationToken.None);
+
+        Assert.Equal(JobStatus.Canceled, canceled.Status);
+        var canceledPhase = pipeline.LoadJob(directory).PhaseStates.Single(state => state.Phase == phase);
+        Assert.Equal(PhaseStatus.Canceled, canceledPhase.Status);
+        Assert.Null(canceledPhase.Error);
+
+        fake.CancelAt = null;
+        var resumed = await pipeline.ResumeAsync(directory, null, null, CancellationToken.None);
+
+        Assert.Equal(JobStatus.CompletedFactorFound, resumed.Status);
+        Assert.True(fake.Calls.Count(call => call == phase) >= 2);
     }
 
     [Fact]

@@ -30,8 +30,10 @@ public static class FactorBaseGenerator
 {
     public static FactorBaseGenerationResult Generate(
         FactorBaseOptions options,
-        IProgress<SiqsProgressEvent>? progress = null)
+        IProgress<SiqsProgressEvent>? progress = null,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var n = options.TargetN;
         if (n <= 1)
         {
@@ -40,7 +42,7 @@ public static class FactorBaseGenerator
 
         var allowTinyTrialDivision = options.AllowTinyInputTrialDivision
             ?? (options.Bound is null && options.Multiplier is null);
-        if (FactorBasePrecheck.TryFind(n, allowTinyTrialDivision) is { } early)
+        if (FactorBasePrecheck.TryFind(n, allowTinyTrialDivision, cancellationToken) is { } early)
         {
             Report(progress, ProgressLevel.Info, "precheck completed", artifact: "factors.txt");
             return new FactorBaseGenerationResult(null, early);
@@ -62,7 +64,7 @@ public static class FactorBaseGenerator
         Report(progress, ProgressLevel.Info, "generating primes",
             counters: new() { ["bound"] = bound.ToString(), ["multiplier"] = multiplier.ToString() });
 
-        var build = FactorBaseDocumentBuilder.Build(n, multiplier, scaledN, bound);
+        var build = FactorBaseDocumentBuilder.Build(n, multiplier, scaledN, bound, cancellationToken);
         if (build.EarlyOutcome is { } factorFoundDuringBuild)
         {
             return new FactorBaseGenerationResult(null, factorFoundDuringBuild);
@@ -72,6 +74,7 @@ public static class FactorBaseGenerator
         Report(progress, ProgressLevel.Info, "factor base built",
             counters: new() { ["factor_base_size"] = factorBase.Entries.Count.ToString() }, artifact: "factor_base.txt");
 
+        cancellationToken.ThrowIfCancellationRequested();
         return new FactorBaseGenerationResult(factorBase, null);
     }
 

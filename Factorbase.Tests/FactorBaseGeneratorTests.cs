@@ -305,6 +305,35 @@ public class FactorBaseGeneratorTests
         Assert.Equal("input_is_prime", row.Reason);
         Assert.Null(row.Factor1);
         Assert.Null(row.Factor2);
+        Assert.NotNull(row.PrimalityTest);
+        Assert.NotNull(row.PrimalityRange);
+    }
+
+    [Fact]
+    public void Prime_inside_deterministic_range_is_proven_by_documented_witness_set()
+    {
+        var result = FactorBaseGenerator.Generate(new FactorBaseOptions(
+            BigInteger.Parse("1000000007"), AllowTinyInputTrialDivision: false));
+
+        var row = Assert.Single(result.EarlyOutcome!.Results);
+        Assert.Equal(FactorizationStatus.InputPrime, row.Status);
+        Assert.Equal("deterministic_miller_rabin_13_witnesses", row.PrimalityTest);
+        Assert.Contains(Primality.DeterministicUpperBound.ToString(), row.PrimalityRange);
+    }
+
+    [Fact]
+    public void Baillie_psw_positive_above_deterministic_range_is_probable_not_proven()
+    {
+        var input = (BigInteger.One << 127) - 1;
+
+        var result = FactorBaseGenerator.Generate(new FactorBaseOptions(
+            input, AllowTinyInputTrialDivision: false));
+
+        var row = Assert.Single(result.EarlyOutcome!.Results);
+        Assert.Equal(FactorizationStatus.InputProbablePrime, row.Status);
+        Assert.Equal("input_is_probable_prime", row.Reason);
+        Assert.Equal("baillie_psw", row.PrimalityTest);
+        Assert.Contains("no proof certificate", row.PrimalityRange);
     }
 
     [Fact]

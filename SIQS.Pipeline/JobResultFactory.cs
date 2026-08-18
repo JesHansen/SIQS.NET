@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Numerics;
+using LinearAlgebra;
 using SIQS.Contracts;
 
 namespace SIQS.Pipeline;
@@ -48,7 +49,8 @@ internal static class JobResultFactory
             [RunParameterKeys.ResieveLargePrimeCutoff] = s.ResieveLargePrimeCutoff?.ToString(CultureInfo.InvariantCulture) ?? "auto",
             [RunParameterKeys.SmallPrimeVariationBound] = "auto",
             [RunParameterKeys.TrialSievePercent] = request.TrialSievePercent?.ToString("G", CultureInfo.InvariantCulture) ?? "off",
-            [RunParameterKeys.LinearAlgebraMaxDependencies] = la.MaxDependencies?.ToString(CultureInfo.InvariantCulture) ?? "auto",
+            [RunParameterKeys.LinearAlgebraMaxDependencies] =
+                (la.MaxDependencies ?? BlockLanczos.DefaultMaxDependencies).ToString(CultureInfo.InvariantCulture),
             [RunParameterKeys.LinearAlgebraParallelism] = la.Parallelism?.ToString(CultureInfo.InvariantCulture) ?? "auto",
             [RunParameterKeys.ContinueSquareRootAfterFactor] = request.SquareRoot.ContinueAfterFactor ? "true" : "false",
             [RunParameterKeys.AllowTinyInputTrialDivision] = fb.AllowTinyInputTrialDivision?.ToString() ?? "auto",

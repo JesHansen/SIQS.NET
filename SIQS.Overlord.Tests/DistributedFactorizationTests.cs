@@ -266,6 +266,50 @@ public class DistributedFactorizationTests : IDisposable
     }
 
     [Fact]
+    public async Task Stop_rejects_new_work_waits_for_an_accepted_upload_and_joins_pipeline()
+    {
+        await using var service = new OverlordService(_runsRoot, new OverlordOptions
+        {
+            LeaseChunkSize = 1,
+            UploadGracePeriod = TimeSpan.FromSeconds(30),
+        });
+        service.Submit(new FactorizationRequest(BigInteger.Parse("1022117"))
+        {
+            FactorBase = new FactorBaseRunOptions { Bound = 1000, Multiplier = 1 },
+            Sieving = new SievingRunOptions
+            {
+                HalfInterval = 20_000,
+                APrimeCount = 2,
+                APrimeWindowSize = 24,
+                ErrorMargin = 20,
+                RelationTarget = 150,
+                PolynomialCount = 200_000,
+            },
+        });
+        await WaitUntilAsync(() => service.Current!.Phase == OverlordPhase.Sieving, TimeSpan.FromSeconds(5));
+        var lease = Assert.IsType<LeaseResponse>(service.TryLease());
+        using var body = new GatedReadStream(Array.Empty<byte>());
+        var upload = service.UploadChunkAsync(lease.JobId, lease.LeaseId, 0, body);
+        await Task.Delay(50);
+
+        var stop = service.StopAsync(CancellationToken.None);
+        await Task.Delay(50);
+
+        Assert.False(stop.IsCompleted);
+        Assert.Null(service.TryLease());
+        Assert.Throws<InvalidOperationException>(() =>
+            service.Submit(new FactorizationRequest(91)));
+
+        body.Release();
+        await upload;
+        await stop.WaitAsync(TimeSpan.FromSeconds(5));
+        await service.StopAsync(CancellationToken.None);
+
+        Assert.True(service.Completion!.IsCompleted);
+        Assert.Equal(JobStatus.Canceled, JobStore.LoadSnapshot(service.Current!.Directory).Status);
+    }
+
+    [Fact]
     public async Task Malformed_stream_does_not_complete_the_lease()
     {
         await using var service = new OverlordService(_runsRoot, new OverlordOptions { LeaseChunkSize = 1 });
@@ -533,7 +577,8 @@ public class DistributedFactorizationTests : IDisposable
         {
             LeaseChunkSize = 16,
             MaxRelationChunkBytes = 4,
-            MaxRelationSpoolBytes = 8,
+            MaxRelationBacklogBytes = 8,
+            MaxRelationInboxBytes = 64,
         });
         service.Submit(new FactorizationRequest(BigInteger.Parse("1022117"))
         {

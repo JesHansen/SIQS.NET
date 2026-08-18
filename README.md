@@ -10,6 +10,10 @@ SIQS.NET is an implementation of the **self-initializing quadratic sieve** in mo
 
 The project is designed to make the algorithm visible without making it toy-sized. A run passes through factor-base construction, polynomial sieving, filtering, linear algebra, and square-root recovery. Along the way, SIQS.NET records progress and artifacts that can be inspected in the UI.
 
+Primality terminology is deliberately strict: exact trial division and the documented deterministic
+Miller-Rabin range produce a proven-prime result; larger Baillie-PSW positives are reported as
+probable primes, with the test and lack of a proof certificate recorded in `factors.txt`.
+
 > [!IMPORTANT]
 > SIQS.NET is intended for education, experimentation, benchmarking, and factoring integers you are authorized to factor. It is not a replacement for a production cryptographic-audit program, and it should not be aimed at systems or keys without explicit permission.
 
@@ -18,7 +22,7 @@ The project is designed to make the algorithm visible without making it toy-size
 - **Factor an integer locally** with the `qs` command-line application or the **Factorize** page.
 - **Watch a live run**: phase status, elapsed time, progress, counters, result, and run artifacts are retained for inspection.
 - **Spread sieving across machines**: the server coordinates work leases while volunteer clients rebuild and verify the same job parameters before sieving.
-- **Build self-contained sieve clients** from source and serve them directly from the distributed UI.
+- **Download self-contained sieve clients** directly from the distributed UI — **Windows x64** and **Linux x64** are published by default, with **linux-arm64**, **osx-x64**, and **osx-arm64** a build flag away.
 - **Compare parameter choices**: every tuning value the sieve has is a command-line option, documented in [docs/tuning.md](docs/tuning.md).
 - **Learn the method** in **Sieve School**, which includes a guided tour, an animated sieve window, topic quizzes, and a historical timeline.
 - **Work on individual pipeline stages** with focused command-line tools for factor-base generation, sieving, filtering, linear algebra, and square-root recovery.
@@ -27,8 +31,10 @@ The project is designed to make the algorithm visible without making it toy-size
 
 ### Prerequisites
 
-- .NET 10 SDK
-- PowerShell 7+, if using the repository build script (`build.ps1`) — it is cross-platform
+- .NET 10 SDK 10.0.100 or newer. `global.json` selects 10.0.100 when installed and otherwise
+  rolls forward to the newest installed .NET 10 feature band; CI verifies both the minimum and the
+  newest supported band.
+- PowerShell 7+, if using the repository build scripts (`build.ps1` and `build-ui.ps1`) — they are cross-platform
 - A modern browser for the web UI
 
 Clone the repository and build once in Release:
@@ -69,8 +75,9 @@ roughly 15 digits if you want to watch the algorithm work.
 
 On Linux or macOS the same binary is `./QS/bin/Release/net10.0/qs`. The examples below are written
 for PowerShell because that is where most of the development happens, but nothing in the solution
-is Windows-only: CI builds and tests on both Linux and Windows, `build.ps1` runs under PowerShell 7
-(`pwsh ./build.ps1`) on any platform, and `dotnet run --project ...` works everywhere.
+is Windows-only: CI builds and tests on both Linux and Windows, both build scripts run under
+PowerShell 7 (`pwsh ./build.ps1` or `pwsh ./build-ui.ps1`) on any platform, and
+`dotnet run --project ...` works everywhere.
 
 The final argument is the integer to factor. Press `Ctrl+C` to cancel a running command-line job cleanly. Useful flags:
 
@@ -148,7 +155,7 @@ The **Sieve School** and **History** sections together form an interactive compa
 Start the UI service on a reachable address, submit a distributed job in the browser, then download a client onto each worker. The clients are self-contained: a worker does not need the .NET runtime installed.
 
 > [!IMPORTANT]
-> **The downloadable clients are build output, not release artifacts.** A server started with `dotnet run` has never published them, so the download buttons and the `/api/dist/client/...` URLs will report that no client is available. Run `dotnet publish SIQS.UI/SIQS.UI.csproj -c Release` and start the published app first — that is what writes them into `download/` under the content root.
+> **The downloadable clients are build output, not source.** A server started with `dotnet run` has never published them, so the download buttons and the `/api/dist/client/...` URLs will report that no client is available. Run `.\build-ui.ps1` (or `dotnet publish SIQS.UI/SIQS.UI.csproj -c Release` and start the published app) first — that is what writes them into `download/` under the content root.
 >
 > A worker with a checkout of the repository does not need the download at all:
 >
@@ -191,15 +198,17 @@ The Linux client targets `linux-x64` (x86-64 Linux). It is a self-contained sing
 
 ### arm64 and macOS
 
-Publishing the UI builds Windows x64 and Linux x64 clients. Nothing in the sieve is x64-only — the
-AVX2 kernels have scalar fallbacks, which is exactly the path an arm64 or Apple silicon machine
-takes — so workers for other targets can be built directly from source:
+The two x64 clients are published by default because they are what most volunteer machines run, and
+because each extra runtime adds a full self-contained publish to the build. Nothing in the sieve is
+x64-only — the AVX2 kernels have scalar fallbacks, which is exactly the path an arm64 or Apple
+silicon machine takes — so the other targets build and run; they are simply not published unless
+asked for:
 
 ```powershell
-dotnet publish QS.SieveClient/QS.SieveClient.csproj -c Release -r linux-arm64 --self-contained true -p:PublishSingleFile=true -o SIQS.UI/download/linux-arm64
+.\build-ui.ps1 -Runtimes win-x64,linux-x64,linux-arm64,osx-arm64
 ```
 
-Repeat with `osx-x64` or `osx-arm64` as needed. Published clients appear on the **Distributed** page and at `/api/dist/client/<platform>` using the
+Published clients appear on the **Distributed** page and at `/api/dist/client/<platform>` using the
 slugs `windows-x64`, `linux-x64`, `linux-arm64`, `osx-x64`, and `osx-arm64`. A worker that has the
 .NET SDK can skip the download entirely and run from a checkout:
 
@@ -223,28 +232,40 @@ The distributed endpoints intentionally have a small, machine-oriented API:
 | `POST /api/dist/lease` | Request a sieving work lease. |
 | `POST /api/dist/relations` | Upload verified relation data. |
 | `GET /api/dist/status` | Read distributed-job status. |
+| `GET /api/dist/recoverable` | List interrupted distributed jobs; none is activated automatically. |
+| `POST /api/dist/recover/<job-id>` | Explicitly resume the selected interrupted job. |
 | `GET /api/dist/client` | Download the Windows x64 worker (the default platform). |
 | `GET /api/dist/client/{platform}` | Download a worker for `windows-x64`, `linux-x64`, `linux-arm64`, `osx-x64`, or `osx-arm64`. Returns 404 with an explanation when that client has not been published on this server. |
+
+Distributed lease ranges are journaled before use. On recovery, completed ranges stay complete,
+interrupted HTTP uploads are reclaimed, and leases with durable completion markers remain protected
+until inbox replay finishes. If several jobs were interrupted, the operator must choose one on the
+Distributed page or through the recovery endpoint because the server still supports one active job.
+
+Relation uploads use `application/x-ndjson`. `Overlord:MaxRelationChunkBytes` bounds one request,
+`MaxRelationBacklogBytes` bounds unprocessed payload bytes, and `MaxRelationInboxBytes` bounds all
+payloads, temporary files, receipts, failure records, and completion markers retained by the inbox.
+Reservations are concurrency-safe. Terminal jobs delete only `.relation-inbox` by default; set
+`Overlord:RetainRelationInboxOnCompletion` to `true` to retain transport receipts for diagnostics.
+Canonical `relations_*.txt` and `partials_*.txt` artifacts are never part of that cleanup.
 
 > [!CAUTION]
 > The distributed-job submission and worker API are not an internet-facing multi-tenant service. If you expose SIQS beyond a trusted LAN, put it behind suitable authentication, TLS, firewalling, and rate limits. Treat a public server as an operational and security project of its own.
 
 ## Build, test, and publish
 
-The repository-level build script is the supported release workflow:
+The repository has separate release workflows for the command-line application and the web UI.
+
+### Command-line release
+
+Use the primary build script to create distributable `qs` command-line tools:
 
 ```powershell
 .\build.ps1
 ```
 
-It performs the following work in order:
-
-1. Cleans the solution's Release output.
-2. Restores and builds the full solution in Release configuration.
-3. Runs the complete test suite.
-4. Publishes self-contained, single-file `qs` command-line tools for Windows x64 and Linux x64.
-
-The release artifacts are placed at:
+It cleans, restores, and builds the solution; runs the complete test suite; and publishes
+self-contained, single-file tools for Windows x64 and Linux x64. The release artifacts are placed at:
 
 ```text
 artifacts/
@@ -257,28 +278,45 @@ artifacts/
 The latest successful `main` build is also available from the
 [Continuous build release](https://github.com/JesHansen/SIQS.NET/releases/tag/continuous).
 
-Both executables are self-contained, so the target machine does not need the .NET runtime. Select
-specific or additional targets with `-Runtimes`, for example:
+Select specific or additional targets with `-Runtimes`, or skip tests while iterating on a package:
 
 ```powershell
 .\build.ps1 -Runtimes win-x64
-```
-
-To skip the test run while iterating on a release package:
-
-```powershell
 .\build.ps1 -SkipTests
 ```
 
-The UI and its downloadable sieve clients are source-built deployment output, not release
-artifacts. Publish them separately when hosting the web application:
+### UI deployment
+
+Use the UI build script to create a deployment with downloadable distributed sieve clients:
+
+```powershell
+.\build-ui.ps1
+```
+
+It cleans, restores, and builds the solution; publishes self-contained Windows x64 and Linux x64
+sieve clients (override with `-Runtimes`); runs the complete test suite with a minimum discovered-test
+count check; and publishes the UI application. The resulting deployment is placed at:
+
+```text
+SIQS.UI/bin/Release/net10.0/publish/
+```
+
+On Windows, run the published app with:
+
+```powershell
+.\SIQS.UI\bin\Release\net10.0\publish\SIQS.UI.exe --urls "http://0.0.0.0:5078"
+```
+
+The UI host is framework-dependent, so the server needs the .NET 10 runtime. The downloadable sieve
+workers are self-contained. To skip the test run while iterating on a deployment, use
+`.\build-ui.ps1 -SkipTests`.
+
+You can also publish the UI project directly. Its publish target prepares both default worker
+binaries before copying them into the deployment package:
 
 ```powershell
 dotnet publish SIQS.UI/SIQS.UI.csproj -c Release
 ```
-
-The framework-dependent UI deployment is written to
-`SIQS.UI/bin/Release/net10.0/publish/` and requires the .NET 10 runtime.
 
 ## Development commands
 
@@ -363,6 +401,11 @@ The focused stage tools are useful when studying a saved artifact, isolating a p
 Each job has an identifier and a run directory. The job view surfaces the inputs, phase state, elapsed times, counters, result, and available files. This makes it practical to compare parameter choices and revisit a run after it finishes.
 
 For long-running or distributed use:
+
+The UI gives local and distributed jobs 30 seconds to shut down cleanly when the host stops. It
+first rejects new jobs, leases, uploads, and completion markers, then cancels the pipelines, drains
+already accepted inbox writes, and joins background workers. If that host timeout expires, the
+affected job ids are logged and their last atomically persisted state remains available for resume.
 
 - keep `runs/` on durable storage;
 - reserve enough disk space for relation and job artifacts;

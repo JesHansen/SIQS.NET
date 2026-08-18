@@ -18,18 +18,33 @@ internal sealed class FakePhaseExecutor : IPhaseExecutor
     public Queue<(int NonZeroRows, int Columns)> FilteringShapes { get; } = new();
     public Queue<(int NonZeroRows, int Columns)> LinearAlgebraDeficits { get; } = new();
     public bool EarlyFactor { get; init; }
+    public bool EarlyPrime { get; init; }
     public bool SquareRootFindsFactor { get; init; } = true;
     public SiqsPhase? FailAt { get; init; }
+    public SiqsPhase? CancelAt { get; set; }
 
     public Task<PhaseResult> RunFactorBaseAsync(PhaseContext c)
     {
         Calls.Add(SiqsPhase.FactorBase);
+        CancelIfRequested(SiqsPhase.FactorBase);
         if (FailAt == SiqsPhase.FactorBase)
         {
             return Task.FromResult(PhaseResult.Failed(SiqsPhase.FactorBase, "boom"));
         }
 
         var n = c.Request.TargetN;
+        if (EarlyPrime)
+        {
+            var factors = new FactorsDocument(n, 1, n, 0,
+            [
+                new FactorResultRecord(
+                    "precheck", FactorizationStatus.InputPrime, null, null, null, null, "input_is_prime"),
+            ]);
+            File.WriteAllText(Path.Combine(c.JobDirectory, "factors.txt"), FactorsFile.Write(factors));
+            return Task.FromResult(PhaseResult.Completed(SiqsPhase.FactorBase, new[] { "factors.txt" },
+                new Dictionary<string, string> { [CounterKeys.InputIsPrime] = CounterFormat.Bool(true) }));
+        }
+
         if (EarlyFactor)
         {
             var factors = new FactorsDocument(n, 1, n, 0, new[]
@@ -41,8 +56,9 @@ internal sealed class FakePhaseExecutor : IPhaseExecutor
                 new Dictionary<string, string>(), new PhaseFactorOutcome(2, n / 2)));
         }
 
+        var rootModuloTwo = (long)(n & 1);
         var doc = new FactorBaseDocument(new FactorBaseMetadata(n, 1, n, 1000, 10.0),
-            new[] { new FactorBaseEntry(1, 2, 0, 0, 5) });
+            new[] { new FactorBaseEntry(1, 2, rootModuloTwo, rootModuloTwo, 5) });
         File.WriteAllText(Path.Combine(c.JobDirectory, "factor_base.txt"), FactorBaseFile.Write(doc));
         return Task.FromResult(PhaseResult.Completed(SiqsPhase.FactorBase, new[] { "factor_base.txt" }, new Dictionary<string, string>()));
     }
@@ -50,6 +66,7 @@ internal sealed class FakePhaseExecutor : IPhaseExecutor
     public Task<PhaseResult> RunSievingAsync(PhaseContext c)
     {
         Calls.Add(SiqsPhase.Sieving);
+        CancelIfRequested(SiqsPhase.Sieving);
         SievingRequests.Add(c.Request);
         if (FailAt == SiqsPhase.Sieving)
         {
@@ -72,6 +89,7 @@ internal sealed class FakePhaseExecutor : IPhaseExecutor
     public Task<PhaseResult> RunFilteringAsync(PhaseContext c)
     {
         Calls.Add(SiqsPhase.Filtering);
+        CancelIfRequested(SiqsPhase.Filtering);
         if (FailAt == SiqsPhase.Filtering)
         {
             return Task.FromResult(PhaseResult.Failed(SiqsPhase.Filtering, "boom"));
@@ -86,14 +104,15 @@ internal sealed class FakePhaseExecutor : IPhaseExecutor
                 $"F{i:D8}",
                 RelationKind.Full,
                 new[] { $"R{i:D8}" },
-                T: 3 + i,
+                T: 2,
                 Sign: 1,
-                Exponents: new Dictionary<int, int>(),
-                ParityColumns: columns > 0 ? new[] { i % columns } : Array.Empty<int>(),
+                Exponents: new Dictionary<int, int> { [1] = 2 },
+                ParityColumns: Array.Empty<int>(),
                 LargePrime: null))
             .ToArray();
         var matrix = filteredRelations
-            .Select((r, i) => new SparseMatrixRowRecord(i, r.RelationId, r.ParityColumns))
+            .Select((r, i) => new SparseMatrixRowRecord(
+                i, r.RelationId, columns > 0 ? new[] { i % columns } : Array.Empty<int>()))
             .ToArray();
         File.WriteAllText(Path.Combine(c.JobDirectory, "relations_filtered.txt"),
             FilteredRelationsFile.Write(new FilteredRelationsDocument(n, 1, n, filteredRelations)));
@@ -114,6 +133,7 @@ internal sealed class FakePhaseExecutor : IPhaseExecutor
     public Task<PhaseResult> RunLinearAlgebraAsync(PhaseContext c)
     {
         Calls.Add(SiqsPhase.LinearAlgebra);
+        CancelIfRequested(SiqsPhase.LinearAlgebra);
         LinearAlgebraRequests.Add(c.Request);
         if (FailAt == SiqsPhase.LinearAlgebra)
         {
@@ -128,14 +148,21 @@ internal sealed class FakePhaseExecutor : IPhaseExecutor
 
         var n = c.Request.TargetN;
         var meta = MatrixMetaFile.Parse(File.ReadAllText(Path.Combine(c.JobDirectory, "matrix_meta.txt")));
+        var dependencyRows = meta.ColumnCount == 0
+            ? new[] { 0 }
+            : new[] { 0, meta.ColumnCount };
+        var dependencyRelations = dependencyRows.Select(row => $"F{row:D8}").ToArray();
         File.WriteAllText(Path.Combine(c.JobDirectory, "dependencies.txt"),
-            DependenciesFile.Write(new DependenciesDocument(n, 1, n, meta.RowCount, meta.ColumnCount, Array.Empty<DependencyRecord>())));
+            DependenciesFile.Write(new DependenciesDocument(
+                n, 1, n, meta.RowCount, meta.ColumnCount,
+                new[] { new DependencyRecord(0, dependencyRows, dependencyRelations) })));
         return Task.FromResult(PhaseResult.Completed(SiqsPhase.LinearAlgebra, new[] { "dependencies.txt" }, new Dictionary<string, string>()));
     }
 
     public Task<PhaseResult> RunSquareRootAsync(PhaseContext c)
     {
         Calls.Add(SiqsPhase.SquareRoot);
+        CancelIfRequested(SiqsPhase.SquareRoot);
         if (FailAt == SiqsPhase.SquareRoot)
         {
             return Task.FromResult(PhaseResult.Failed(SiqsPhase.SquareRoot, "boom"));
@@ -150,5 +177,13 @@ internal sealed class FakePhaseExecutor : IPhaseExecutor
             FactorsFile.Write(new FactorsDocument(n, 1, n, 1, new[] { row })));
         return Task.FromResult(PhaseResult.Completed(SiqsPhase.SquareRoot, new[] { "factors.txt" },
             new Dictionary<string, string> { ["dependencies_attempted"] = "1" }, factor));
+    }
+
+    private void CancelIfRequested(SiqsPhase phase)
+    {
+        if (CancelAt == phase)
+        {
+            throw new OperationCanceledException($"Canceled during {phase} test work.");
+        }
     }
 }

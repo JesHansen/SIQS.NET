@@ -15,7 +15,8 @@ public static class BlockLanczosDependencyExtractor
         IReadOnlyList<RelationRow> rows,
         int columnCount,
         IReadOnlyList<ulong> candidateBlock,
-        int maxDependencies)
+        int maxDependencies,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(rows);
         ArgumentNullException.ThrowIfNull(candidateBlock);
@@ -30,6 +31,7 @@ public static class BlockLanczosDependencyExtractor
         var verified = new List<Dependency>();
         for (var column = 0; column < CandidateColumns && verified.Count < maxDependencies; column++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var dependency = new Dependency(RowIdsInColumn(candidateBlock, column));
             if (dependency.Count != 0 &&
                 dependency.VerifiesAgainst(rows, columnCount) &&

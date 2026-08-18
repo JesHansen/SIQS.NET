@@ -503,6 +503,31 @@ public class FilteringEngineTests
     }
 
     [Fact]
+    public void Extracted_reduction_components_remain_byte_deterministic()
+    {
+        var fb = FactorBase(8);
+        var rows = new[]
+        {
+            Full("R00000000", 1, 2),
+            Full("R00000001", 1, 2),
+            Full("R00000002", 2, 3),
+            Full("R00000003", 1, 3),
+            Full("R00000004", 4),
+        };
+
+        var first = FilteringEngine.Run(fb, rows, Array.Empty<RawRelationRecord>());
+        var second = FilteringEngine.Run(fb, rows, Array.Empty<RawRelationRecord>());
+
+        Assert.Equal(FilteredRelationsFile.Write(first.Relations), FilteredRelationsFile.Write(second.Relations));
+        Assert.Equal(FilteredMatrixFile.Write(first.Matrix), FilteredMatrixFile.Write(second.Matrix));
+        Assert.Equal(MatrixMetaFile.Write(first.Meta), MatrixMetaFile.Write(second.Meta));
+        Assert.Equal(first.Counters.DuplicatesRemoved, second.Counters.DuplicatesRemoved);
+        Assert.Equal(first.Counters.SingletonPruned, second.Counters.SingletonPruned);
+        Assert.Equal(first.Counters.TwoMerges, second.Counters.TwoMerges);
+        Assert.Equal(first.Counters.SurplusRowsTrimmed, second.Counters.SurplusRowsTrimmed);
+    }
+
+    [Fact]
     public void Rejects_parity_that_disagrees_with_exponents()
     {
         var fb = FactorBase(5);

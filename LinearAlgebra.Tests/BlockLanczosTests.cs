@@ -4,6 +4,52 @@ namespace LinearAlgebra.Tests;
 
 public class BlockLanczosTests
 {
+    [Fact]
+    public void Dependency_budget_is_one_candidate_block_and_rejects_larger_values()
+    {
+        var rows = new[] { new RelationRow(0, 2), new RelationRow(1, 2), new RelationRow(0, 1) };
+
+        var result = BlockLanczos.Solve(rows, columnCount: 3, maxDependencies: 64);
+
+        Assert.Equal(1, result.LanczosRuns);
+        Assert.Equal("successful-block", result.StopReason);
+        Assert.Equal(result.LanczosDependencies, result.Dependencies.Count);
+        Assert.Equal(result.LanczosDependencies, result.LanczosCandidatesExtracted);
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => BlockLanczos.Solve(rows, columnCount: 3, maxDependencies: 65));
+    }
+
+    [Fact]
+    public void Retry_policy_stops_after_a_verified_dependency_or_four_failed_seeds()
+    {
+        Assert.True(BlockLanczosRetryPolicy.ShouldStartRun(retry: 0, verifiedLanczosDependencies: 0));
+        Assert.True(BlockLanczosRetryPolicy.ShouldStartRun(retry: 3, verifiedLanczosDependencies: 0));
+        Assert.False(BlockLanczosRetryPolicy.ShouldStartRun(retry: 4, verifiedLanczosDependencies: 0));
+        Assert.False(BlockLanczosRetryPolicy.ShouldStartRun(retry: 1, verifiedLanczosDependencies: 1));
+    }
+
+    [Fact]
+    public void Workspace_plan_builds_transposed_adjacency_and_reusable_parallel_buffers()
+    {
+        var storage = new BlockLanczosMatrixStorage(
+            relationCount: 3,
+            originalParityColumnCount: 3,
+            sparseParityColumnCount: 2,
+            columnIndices: [0, 1, 0],
+            rowOffsets: [0, 1, 2, 3],
+            denseParityColumns: [2],
+            denseRowMasks: [0, 1, 0]);
+
+        var plan = BlockLanczosWorkspacePlan.Create(storage, 2, CancellationToken.None);
+
+        Assert.Equal([0, 2, 3], plan.ColumnOffsets);
+        Assert.Equal([0, 2, 1], plan.ColumnRelationIndices);
+        Assert.Equal(2, plan.RelationPartitions.Length);
+        Assert.Equal(2, plan.DenseScratch.Length);
+        Assert.All(plan.DenseScratch, scratch => Assert.Single(scratch));
+        Assert.Single(plan.DenseImage);
+    }
+
     private static void AssertAllDependenciesXorToZero(SolveResult result, IReadOnlyList<RelationRow> rows)
     {
         Assert.NotEmpty(result.Dependencies);
@@ -85,8 +131,8 @@ public class BlockLanczosTests
         var x1 = new ulong[5];
         var x2 = new ulong[5];
 
-        BlockLanczos.FillInitialVector(x1, retry: 0, seed: BlockLanczosOptions.DefaultSeed);
-        BlockLanczos.FillInitialVector(x2, retry: 0, seed: 0xC0FFEEUL);
+        BlockLanczosRecurrence.FillInitialVector(x1, retry: 0, seed: BlockLanczosOptions.DefaultSeed);
+        BlockLanczosRecurrence.FillInitialVector(x2, retry: 0, seed: 0xC0FFEEUL);
 
         Assert.NotEqual(x1, x2);
     }
@@ -97,8 +143,8 @@ public class BlockLanczosTests
         var x1 = new ulong[5];
         var x2 = new ulong[5];
 
-        BlockLanczos.FillInitialVector(x1, retry: 2, seed: 0xC0FFEEUL);
-        BlockLanczos.FillInitialVector(x2, retry: 2, seed: 0xC0FFEEUL);
+        BlockLanczosRecurrence.FillInitialVector(x1, retry: 2, seed: 0xC0FFEEUL);
+        BlockLanczosRecurrence.FillInitialVector(x2, retry: 2, seed: 0xC0FFEEUL);
 
         Assert.Equal(x1, x2);
     }
@@ -133,7 +179,7 @@ public class BlockLanczosTests
     [InlineData(16_000, 1_000)]
     public void Slow_convergence_threshold_is_n_over_16_floored_at_64(int relationCount, int expected)
     {
-        Assert.Equal(expected, BlockLanczos.SlowConvergenceIterationThreshold(relationCount));
+        Assert.Equal(expected, BlockLanczosRecurrence.SlowConvergenceIterationThreshold(relationCount));
     }
 
     [Fact]
@@ -226,7 +272,7 @@ public class BlockLanczosTests
         var actualVnext = expectedVnext.ToArray();
         var expectedX = RandomWords(random, length);
         var actualX = expectedX.ToArray();
-        var workspace = new BlockLanczos.VectorWorkspace(length, requestedParallelism: 8);
+        var workspace = new BlockLanczosRecurrence.VectorWorkspace(length, requestedParallelism: 8);
 
         Gf2Matrix64.ApplyToBlockVector(vectors[0], matrices[0], expectedVnext);
         Gf2Matrix64.ApplyToBlockVector(vectors[1], matrices[1], expectedVnext);

@@ -15,6 +15,7 @@ internal static class ArtifactValidator
         SiqsPhase phase, string directory, FactorizationRequest request, PhaseResult? result)
     {
         var builder = new ValidationResultBuilder();
+        var validateResumeInvariants = result is null;
 
         bool Exists(string name) => File.Exists(Path.Combine(directory, name));
         string Read(string name) => ArtifactFileIO.ReadAllText(Path.Combine(directory, name));
@@ -55,7 +56,9 @@ internal static class ArtifactValidator
         switch (phase)
         {
             case SiqsPhase.FactorBase when result?.Factor is not null ||
-                (result is not null && CounterFormat.ReadBool(result.Counters, CounterKeys.InputIsPrime)):
+                (result is not null && CounterFormat.ReadBool(result.Counters, CounterKeys.InputIsPrime)) ||
+                (result is not null && CounterFormat.ReadBool(result.Counters, CounterKeys.InputIsProbablePrime)) ||
+                (result is null && !Exists("factor_base.txt") && Exists("factors.txt")):
                 builder.ErrorIf(!Exists("factors.txt"), "missing_artifact", "factors.txt was not produced.");
                 if (Exists("factors.txt"))
                 {
@@ -63,6 +66,24 @@ internal static class ArtifactValidator
                     if (factorDoc is not null)
                     {
                         CheckTarget(factorDoc.TargetN, factorDoc.Multiplier, factorDoc.ScaledN, "factors.txt");
+                        if (validateResumeInvariants)
+                        {
+                            ArtifactInvariantValidator.Factors(factorDoc, builder);
+                        }
+                        builder.ErrorIf(factorDoc.Results.Count != 1,
+                            "invalid_artifact", "factor-base factors.txt must contain exactly one precheck result.");
+                        builder.ErrorIf(factorDoc.Results.Any(row => row.Status is not
+                                (FactorizationStatus.InputPrime or FactorizationStatus.InputProbablePrime or
+                                 FactorizationStatus.FactorFound)),
+                            "invalid_artifact", "factor-base factors.txt contains a nonterminal precheck status.");
+                        foreach (var row in factorDoc.Results.Where(row =>
+                                     row.Status == FactorizationStatus.FactorFound))
+                        {
+                            builder.ErrorIf(row.Factor1 is not { } factor1 || row.Factor2 is not { } factor2 ||
+                                factor1 <= 1 || factor2 <= 1 || factor1 >= request.TargetN ||
+                                factor2 >= request.TargetN || factor1 * factor2 != request.TargetN,
+                                "invalid_artifact", "factor-base factors.txt contains an invalid factor pair.");
+                        }
                     }
                 }
 
@@ -84,6 +105,10 @@ internal static class ArtifactValidator
                             "metadata_mismatch", "factor_base.txt scaled_n != target_n * multiplier.");
                         builder.ErrorIf(request.FactorBase.Bound is { } bound && fbMeta.Bound != bound,
                             "metadata_mismatch", "factor_base.txt bound does not match the stored request.");
+                        if (validateResumeInvariants)
+                        {
+                            ArtifactInvariantValidator.FactorBase(doc, builder);
+                        }
                     }
                 }
 
@@ -99,6 +124,7 @@ internal static class ArtifactValidator
                     .OrderBy(p => p, StringComparer.Ordinal)
                     .ToArray();
                 builder.ErrorIf(rawPaths.Length == 0, "missing_artifact", "no relations_*.txt or partials_*.txt produced.");
+                var rawRelationIds = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var path in rawPaths)
                 {
                     try
@@ -109,6 +135,16 @@ internal static class ArtifactValidator
                         {
                             builder.ErrorIf(doc.Metadata.FactorBaseBound != factorBase.Metadata.Bound,
                                 "metadata_mismatch", $"{Path.GetFileName(path)} factor_base_bound disagrees with factor_base.txt.");
+                            if (validateResumeInvariants)
+                            {
+                                var expectedKind = Path.GetFileName(path).StartsWith("relations_", StringComparison.Ordinal)
+                                    ? RelationKind.Full
+                                    : RelationKind.Partial;
+                                var verifier = new RelationVerifier(
+                                    factorBase, doc.Metadata.LargePrimeBound, doc.Metadata.LargePrime2Bound);
+                                ArtifactInvariantValidator.RawRelations(
+                                    doc.Relations, Path.GetFileName(path), expectedKind, verifier, rawRelationIds, builder);
+                            }
                         }
                     }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FormatException or ArgumentException)
@@ -156,16 +192,19 @@ internal static class ArtifactValidator
                 if (relations is not null)
                 {
                     CheckTarget(relations.TargetN, relations.Multiplier, relations.ScaledN, "relations_filtered.txt");
+                    if (validateResumeInvariants && factorBase is not null)
+                    {
+                        ArtifactInvariantValidator.FilteredRelations(relations, factorBase, builder);
+                    }
                 }
 
                 if (meta is not null && matrix is not null)
                 {
                     builder.ErrorIf(matrix.Count != meta.RowCount,
                         "metadata_mismatch", "filtered_matrix.txt row count does not match matrix_meta.txt.");
-                    foreach (var row in matrix)
+                    if (validateResumeInvariants)
                     {
-                        builder.ErrorIf(row.Columns.Any(c => c < 0 || c >= meta.ColumnCount),
-                            "metadata_mismatch", $"filtered_matrix.txt row {row.RowId} references a column outside matrix_meta.txt.");
+                        ArtifactInvariantValidator.Matrix(matrix, meta, relations, builder);
                     }
                 }
 
@@ -199,6 +238,18 @@ internal static class ArtifactValidator
                 {
                     builder.ErrorIf(deps.RowCount != matrixMeta.RowCount || deps.ColumnCount != matrixMeta.ColumnCount,
                         "metadata_mismatch", "dependencies.txt dimensions do not match matrix_meta.txt.");
+                    if (validateResumeInvariants && Exists("filtered_matrix.txt"))
+                    {
+                        var dependencyMatrix = Parse("filtered_matrix.txt", FilteredMatrixFile.Parse);
+                        if (dependencyMatrix is not null)
+                        {
+                            ArtifactInvariantValidator.Dependencies(deps, dependencyMatrix, builder);
+                        }
+                    }
+                    else if (validateResumeInvariants)
+                    {
+                        builder.Error("missing_artifact", "filtered_matrix.txt is required to verify dependencies.txt.");
+                    }
                 }
 
                 break;
@@ -213,6 +264,10 @@ internal static class ArtifactValidator
                 if (factors is not null)
                 {
                     CheckTarget(factors.TargetN, factors.Multiplier, factors.ScaledN, "factors.txt");
+                    if (validateResumeInvariants)
+                    {
+                        ArtifactInvariantValidator.Factors(factors, builder);
+                    }
                 }
 
                 break;

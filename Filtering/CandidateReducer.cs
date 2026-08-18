@@ -7,24 +7,20 @@ namespace Filtering;
 internal readonly record struct MatrixShape(int Columns, int NonZeroRows);
 
 /// <summary>
-/// Reduces a candidate set toward a solvable matrix: removes congruence duplicates, prunes singleton
-/// columns, trims the heaviest surplus rows, and records the row-weight telemetry.
+/// Removes arithmetically equivalent candidate rows before structural filtering.
 /// </summary>
-internal static class CandidateReducer
+internal static class CandidateDuplicateRemover
 {
-    private readonly record struct TwoMergeProposal(
-        int LeftRow,
-        int RightRow,
-        int MergedWeight,
-        int Savings,
-        int Column);
-
-    public static List<Candidate> RemoveDuplicates(List<Candidate> ordered, FilteringCounters counters)
+    public static List<Candidate> RemoveDuplicates(
+        List<Candidate> ordered,
+        FilteringCounters counters,
+        CancellationToken cancellationToken = default)
     {
         var seen = new HashSet<(ulong, ulong)>();
         var result = new List<Candidate>();
         foreach (var candidate in ordered)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (seen.Add(candidate.DuplicateFingerprint))
             {
                 result.Add(candidate);
@@ -37,9 +33,18 @@ internal static class CandidateReducer
 
         return result;
     }
+}
 
-    public static List<Candidate> PruneSingletons(List<Candidate> candidates, int factorBaseCount, FilteringCounters counters)
+/// <summary>Prunes rows made unusable by singleton parity columns.</summary>
+internal static class CandidateSingletonPruner
+{
+    public static List<Candidate> PruneSingletons(
+        List<Candidate> candidates,
+        int factorBaseCount,
+        FilteringCounters counters,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var active = new bool[candidates.Count];
         Array.Fill(active, true);
 
@@ -48,6 +53,10 @@ internal static class CandidateReducer
         var columnCounts = new int[factorBaseCount + 1];
         for (var r = 0; r < candidates.Count; r++)
         {
+            if ((r & 0xfff) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
             foreach (var col in candidates[r].Parity)
             {
                 columnCounts[col]++;
@@ -65,6 +74,10 @@ internal static class CandidateReducer
         Array.Copy(offsets, cursors, cursors.Length);
         for (var r = 0; r < candidates.Count; r++)
         {
+            if ((r & 0xfff) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
             foreach (var col in candidates[r].Parity)
             {
                 rowsByColumn[cursors[col]++] = r;
@@ -86,6 +99,10 @@ internal static class CandidateReducer
 
         while (queue.Count > 0)
         {
+            if ((queue.Count & 0xfff) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
             var col = queue.Dequeue();
             if (columnCounts[col] != 1)
             {
@@ -127,6 +144,33 @@ internal static class CandidateReducer
         return survivors;
     }
 
+    private static int FindActiveRow(int[] rowsByColumn, ref int cursor, int end, bool[] active)
+    {
+        while (cursor < end)
+        {
+            var row = rowsByColumn[cursor];
+            if (active[row])
+            {
+                return row;
+            }
+
+            cursor++;
+        }
+
+        return -1;
+    }
+}
+
+/// <summary>Selects and applies deterministic weight-two structured-elimination merges.</summary>
+internal static class CandidateWeightTwoMerger
+{
+    private readonly record struct TwoMergeProposal(
+        int LeftRow,
+        int RightRow,
+        int MergedWeight,
+        int Savings,
+        int Column);
+
     /// <summary>
     /// Performs structured Gaussian elimination on weight-2 columns. The two incident rows are
     /// replaced by their XOR, optionally subject to a fill budget relative to the lighter row.
@@ -138,7 +182,8 @@ internal static class CandidateReducer
         int factorBaseCount,
         BigInteger scaledN,
         int? slack,
-        FilteringCounters counters)
+        FilteringCounters counters,
+        CancellationToken cancellationToken = default)
     {
         if (slack is < 0)
         {
@@ -147,6 +192,7 @@ internal static class CandidateReducer
 
         while (candidates.Count > 1)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var (counts, firstRows, secondRows) = BuildColumnIncidence(candidates, factorBaseCount);
             var proposals = CollectTwoMergeProposals(candidates, counts, firstRows, secondRows, slack);
             var merged = ApplyTwoMerges(candidates, proposals, scaledN, counters);
@@ -357,19 +403,25 @@ internal static class CandidateReducer
 
         return ParityColumnSet.FromOwned(columns[..count]);
     }
+}
 
+/// <summary>Trims the heaviest surplus rows to the target matrix shape.</summary>
+internal static class CandidateRowTrimmer
+{
     public static List<Candidate> TrimHeavyRows(
         List<Candidate> candidates,
         int factorBaseCount,
         FilteringOptions options,
-        FilteringCounters counters)
+        FilteringCounters counters,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (candidates.Count == 0)
         {
             return candidates;
         }
 
-        var stats = MatrixStats(candidates, factorBaseCount);
+        var stats = CandidateReductionTelemetry.MatrixStats(candidates, factorBaseCount, cancellationToken);
         var targetSurplus = AutomaticTargetNonZeroSurplus(stats.Columns);
         counters.TargetNonZeroSurplus = targetSurplus;
         var targetNonZeroRows = stats.Columns + targetSurplus;
@@ -424,15 +476,26 @@ internal static class CandidateReducer
 
         return Math.Clamp((int)Math.Ceiling(columns * 0.008), 16, 4096);
     }
+}
 
-    public static void RecordPrePruningTelemetry(List<Candidate> candidates, int factorBaseCount, FilteringCounters counters)
+/// <summary>Calculates filtering matrix-shape and row-weight telemetry.</summary>
+internal static class CandidateReductionTelemetry
+{
+    public static void RecordPrePruningTelemetry(
+        List<Candidate> candidates,
+        int factorBaseCount,
+        FilteringCounters counters,
+        CancellationToken cancellationToken = default)
     {
-        var stats = MatrixStats(candidates, factorBaseCount);
+        var stats = MatrixStats(candidates, factorBaseCount, cancellationToken);
         counters.RowsBeforePruning = candidates.Count;
         counters.ColumnsBeforePruning = stats.Columns;
     }
 
-    private static MatrixShape MatrixStats(List<Candidate> candidates, int factorBaseCount)
+    internal static MatrixShape MatrixStats(
+        List<Candidate> candidates,
+        int factorBaseCount,
+        CancellationToken cancellationToken)
     {
         var activeColumns = new bool[factorBaseCount + 1];
         var columns = 0;
@@ -440,6 +503,7 @@ internal static class CandidateReducer
 
         foreach (var candidate in candidates)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (candidate.Parity.Count > 0)
             {
                 nonZeroRows++;
@@ -458,8 +522,13 @@ internal static class CandidateReducer
         return new MatrixShape(columns, nonZeroRows);
     }
 
-    public static void RecordRowWeightTelemetry(List<Candidate> candidates, bool beforeTrim, FilteringCounters counters)
+    public static void RecordRowWeightTelemetry(
+        List<Candidate> candidates,
+        bool beforeTrim,
+        FilteringCounters counters,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var weights = candidates
             .Select(candidate => candidate.Parity.Count)
             .Order()
@@ -470,6 +539,7 @@ internal static class CandidateReducer
         var p50 = PercentileNearestRank(weights, 0.50);
         var p90 = PercentileNearestRank(weights, 0.90);
         var p99 = PercentileNearestRank(weights, 0.99);
+        cancellationToken.ThrowIfCancellationRequested();
 
         if (beforeTrim)
         {
@@ -502,19 +572,4 @@ internal static class CandidateReducer
         return sortedWeights[Math.Clamp(rank - 1, 0, sortedWeights.Count - 1)];
     }
 
-    private static int FindActiveRow(int[] rowsByColumn, ref int cursor, int end, bool[] active)
-    {
-        while (cursor < end)
-        {
-            var row = rowsByColumn[cursor];
-            if (active[row])
-            {
-                return row;
-            }
-
-            cursor++;
-        }
-
-        return -1;
-    }
 }

@@ -8,8 +8,10 @@ internal static class BlockLanczosCandidateCombiner
         IReadOnlyList<ulong> x,
         IReadOnlyList<ulong> v,
         IReadOnlyList<ulong> ax,
-        IReadOnlyList<ulong> av)
+        IReadOnlyList<ulong> av,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (x.Count != columnCount || v.Count != columnCount)
         {
             throw new ArgumentException("Candidate vectors must match the Lanczos column count.");
@@ -38,6 +40,10 @@ internal static class BlockLanczosCandidateCombiner
         var pivotRow = 0;
         for (var bit = 0; bit < rowCount && pivotRow < 128; bit++)
         {
+            if ((bit & 0xfff) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
             var word = bit >> 6;
             var mask = 1UL << (bit & 63);
             var selected = -1;
@@ -82,6 +88,10 @@ internal static class BlockLanczosCandidateCombiner
         var output = new ulong[columnCount];
         for (var relation = 0; relation < columnCount; relation++)
         {
+            if ((relation & 0xfff) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
             var word = relation >> 6;
             var mask = 1UL << (relation & 63);
             ulong packed = 0;

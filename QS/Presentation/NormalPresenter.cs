@@ -143,6 +143,10 @@ internal sealed class NormalPresenter : IRunPresenter, IProgress<SiqsProgressEve
         {
             AnsiConsole.MarkupLine($"[green]{execution.Target} is prime[/]");
         }
+        else if (result.Status == JobStatus.CompletedProbablePrime)
+        {
+            AnsiConsole.MarkupLine($"[green]{execution.Target} is a Baillie-PSW probable prime[/]");
+        }
         else if (result.Status == JobStatus.Canceled)
         {
             AnsiConsole.MarkupLine("[yellow]canceled[/]");

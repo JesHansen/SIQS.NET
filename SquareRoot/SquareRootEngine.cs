@@ -25,8 +25,10 @@ public static class SquareRootEngine
         FilteredRelationsDocument relations,
         DependenciesDocument dependencies,
         SquareRootOptions? options = null,
-        IProgress<SiqsProgressEvent>? progress = null)
+        IProgress<SiqsProgressEvent>? progress = null,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         options ??= new SquareRootOptions();
         var targetN = factorBase.Metadata.TargetN;
         var primeByColumn = factorBase.Entries.ToDictionary(e => e.Index, e => (BigInteger)e.Prime);
@@ -37,7 +39,9 @@ public static class SquareRootEngine
 
         foreach (var dependency in dependencies.Dependencies)
         {
-            var row = ProcessDependency(dependency, targetN, primeByColumn, relationById);
+            cancellationToken.ThrowIfCancellationRequested();
+            var row = ProcessDependency(
+                dependency, targetN, primeByColumn, relationById, cancellationToken);
             results.Add(row);
 
             if (row.Status == FactorizationStatus.FactorFound)
@@ -64,7 +68,8 @@ public static class SquareRootEngine
         DependencyRecord dependency,
         BigInteger targetN,
         IReadOnlyDictionary<int, BigInteger> primeByColumn,
-        IReadOnlyDictionary<string, FilteredRelationRecord> relationById)
+        IReadOnlyDictionary<string, FilteredRelationRecord> relationById,
+        CancellationToken cancellationToken)
     {
         var id = dependency.DependencyId.ToString();
 
@@ -73,12 +78,14 @@ public static class SquareRootEngine
             return Invalid(id, "row_relation_count_mismatch");
         }
 
-        if (!DependencyRelationResolver.TryResolve(dependency.RelationIds, relationById, out var selected))
+        if (!DependencyRelationResolver.TryResolve(
+                dependency.RelationIds, relationById, out var selected, cancellationToken))
         {
             return Invalid(id, "missing_relation");
         }
 
-        if (!SquareCongruenceBuilder.TryBuild(selected, targetN, primeByColumn, out var congruence, out var invalidReason))
+        if (!SquareCongruenceBuilder.TryBuild(
+                selected, targetN, primeByColumn, out var congruence, out var invalidReason, cancellationToken))
         {
             return Invalid(id, invalidReason!);
         }

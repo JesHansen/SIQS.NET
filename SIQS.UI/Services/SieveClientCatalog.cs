@@ -2,7 +2,7 @@ namespace SIQS.UI.Services;
 
 /// <summary>One downloadable sieve-client build, named by the platform slug used in its download URL.</summary>
 /// <param name="Platform">URL slug, e.g. <c>linux-arm64</c>.</param>
-/// <param name="RuntimeIdentifier">The .NET RID <c>build.ps1</c> publishes for this platform.</param>
+/// <param name="RuntimeIdentifier">The .NET RID <c>build-ui.ps1</c> publishes for this platform.</param>
 /// <param name="FileName">The published executable's name.</param>
 /// <param name="DisplayName">How the platform is written in the UI.</param>
 public sealed record SieveClient(string Platform, string RuntimeIdentifier, string FileName, string DisplayName)
@@ -13,7 +13,7 @@ public sealed record SieveClient(string Platform, string RuntimeIdentifier, stri
 
 /// <summary>
 /// The self-contained sieve clients this deployment can hand to a worker. The executables are not
-/// in source control: <c>build.ps1</c> (or a <c>dotnet publish</c> of the UI) writes them into
+/// in source control: <c>build-ui.ps1</c> (or a <c>dotnet publish</c> of the UI) writes them into
 /// <c>download/</c> under the content root. A server started with <c>dotnet run</c> therefore has
 /// none of them, so whether a client is actually present is a question the UI and the download
 /// endpoint both have to ask rather than assume.
@@ -24,8 +24,8 @@ public sealed class SieveClientCatalog(IWebHostEnvironment environment)
 
     /// <summary>
     /// Every platform the download endpoint knows about. The two x64 clients are what
-    /// <c>build.ps1</c> publishes by default; the rest are built on request with
-    /// <c>build.ps1 -Runtimes</c>, and are offered here only once they exist on disk.
+    /// <c>build-ui.ps1</c> publishes by default; the rest are built on request with
+    /// <c>build-ui.ps1 -Runtimes</c>, and are offered here only once they exist on disk.
     /// </summary>
     public static IReadOnlyList<SieveClient> Known { get; } =
     [

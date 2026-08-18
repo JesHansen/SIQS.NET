@@ -62,6 +62,10 @@ public sealed class RunParameterValidator
         var sievingParallelism = ParseNonNegativeInt(form.SievingParallelism, "Sieving parallelism", errors);
         var sieveBlockSize = ParseNonNegativeInt(form.SieveBlockSize, "Sieve block size", errors);
         var maxDeps = ParsePositiveInt(form.LinearAlgebraMaxDependencies, "Max dependencies", errors);
+        if (maxDeps > FactorizationRequestLimits.MaxDependencies)
+        {
+            errors.Add($"Max dependencies must be at most {FactorizationRequestLimits.MaxDependencies}.");
+        }
 
         if (errors.Count > 0 || n is null)
         {

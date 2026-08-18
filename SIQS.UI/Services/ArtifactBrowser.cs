@@ -13,6 +13,12 @@ public sealed record ArtifactPreview(string Name, bool Exists, long SizeBytes, i
 public sealed class ArtifactBrowser
 {
     private const int PreviewByteLimit = 64 * 1024;
+    private readonly JobWorkspaceResolver _resolver;
+
+    public ArtifactBrowser(JobWorkspaceResolver resolver)
+    {
+        _resolver = resolver;
+    }
 
     public static readonly IReadOnlyList<string> KnownArtifacts = new[]
     {
@@ -21,12 +27,13 @@ public sealed class ArtifactBrowser
         "job.json", "events.log",
     };
 
-    public IReadOnlyList<ArtifactInfo> List(string jobDirectory)
+    public IReadOnlyList<ArtifactInfo> List(string jobId)
     {
+        var workspace = _resolver.ResolveJob(jobId);
         var results = new List<ArtifactInfo>();
         foreach (var name in KnownArtifacts)
         {
-            var path = SafePath(jobDirectory, name);
+            var path = _resolver.ResolveArtifact(workspace, name);
             if (File.Exists(path))
             {
                 var info = new FileInfo(path);
@@ -39,14 +46,14 @@ public sealed class ArtifactBrowser
         }
 
         // Also include any extra relations_*/partials_* batches beyond the first.
-        foreach (var path in Directory.EnumerateFiles(jobDirectory, "relations_*.txt")
-                     .Concat(Directory.EnumerateFiles(jobDirectory, "partials_*.txt"))
+        foreach (var path in Directory.EnumerateFiles(workspace.Path, "relations_*.txt")
+                     .Concat(Directory.EnumerateFiles(workspace.Path, "partials_*.txt"))
                      .OrderBy(p => p, StringComparer.Ordinal))
         {
             var name = Path.GetFileName(path);
             if (!KnownArtifacts.Contains(name) && results.All(r => r.Name != name))
             {
-                var info = new FileInfo(path);
+                var info = new FileInfo(_resolver.ResolveArtifact(workspace, name));
                 results.Add(new ArtifactInfo(name, true, info.Length, info.LastWriteTimeUtc));
             }
         }
@@ -54,9 +61,10 @@ public sealed class ArtifactBrowser
         return results;
     }
 
-    public ArtifactPreview Preview(string jobDirectory, string name)
+    public ArtifactPreview Preview(string jobId, string name)
     {
-        var path = SafePath(jobDirectory, name);
+        var workspace = _resolver.ResolveJob(jobId);
+        var path = _resolver.ResolveArtifact(workspace, name);
         if (!File.Exists(path))
         {
             return new ArtifactPreview(name, false, 0, 0, string.Empty, false);
@@ -70,18 +78,5 @@ public sealed class ArtifactBrowser
         var truncated = info.Length > read;
         var lineCount = text.Count(c => c == '\n') + 1;
         return new ArtifactPreview(name, true, info.Length, lineCount, text, truncated);
-    }
-
-    /// <summary>Resolves <paramref name="name"/> within <paramref name="jobDirectory"/>, rejecting traversal.</summary>
-    private static string SafePath(string jobDirectory, string name)
-    {
-        var root = Path.GetFullPath(jobDirectory);
-        var combined = Path.GetFullPath(Path.Combine(root, name));
-        if (!combined.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal) && combined != root)
-        {
-            throw new UnauthorizedAccessException($"Artifact path '{name}' escapes the job directory.");
-        }
-
-        return combined;
     }
 }

@@ -40,18 +40,12 @@
 
     protected override void OnParametersSet()
     {
-        var directory = Path.Combine(Jobs.RunsRoot, JobId);
-        if (!Directory.Exists(directory))
-        {
-            _preview = null;
-            return;
-        }
-
         try
         {
-            _preview = Artifacts.Preview(directory, Name);
+            _preview = Artifacts.Preview(JobId, Name);
         }
-        catch (UnauthorizedAccessException)
+        catch (Exception ex) when (ex is ArgumentException or UnauthorizedAccessException
+            or DirectoryNotFoundException)
         {
             _preview = null;
         }

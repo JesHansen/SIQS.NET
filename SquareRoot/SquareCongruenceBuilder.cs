@@ -16,12 +16,14 @@ internal static class SquareCongruenceBuilder
         BigInteger targetN,
         IReadOnlyDictionary<int, BigInteger> primeByColumn,
         out SquareCongruence congruence,
-        out string? invalidReason)
+        out string? invalidReason,
+        CancellationToken cancellationToken = default)
     {
         var x = BigInteger.One;
         var exponentSums = new Dictionary<int, BigInteger>();
         foreach (var relation in relations)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             x = IntegerMath.Mod(x * IntegerMath.Mod(relation.T, targetN), targetN);
             if (relation.Kind == RelationKind.CombinedPartial && relation.LargePrimes.Count == 0)
             {
@@ -44,7 +46,7 @@ internal static class SquareCongruenceBuilder
             return Invalid("odd_exponent_sum", out congruence, out invalidReason);
         }
 
-        if (!TryBuildY(relations, exponentSums, targetN, primeByColumn, out var y))
+        if (!TryBuildY(relations, exponentSums, targetN, primeByColumn, cancellationToken, out var y))
         {
             return Invalid("unknown_factor_base_column", out congruence, out invalidReason);
         }
@@ -64,11 +66,13 @@ internal static class SquareCongruenceBuilder
         IReadOnlyDictionary<int, BigInteger> exponentSums,
         BigInteger targetN,
         IReadOnlyDictionary<int, BigInteger> primeByColumn,
+        CancellationToken cancellationToken,
         out BigInteger y)
     {
         y = BigInteger.One;
         foreach (var (column, exponent) in exponentSums)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (column == 0)
             {
                 continue;
@@ -86,6 +90,7 @@ internal static class SquareCongruenceBuilder
                      .Where(relation => relation.Kind == RelationKind.CombinedPartial)
                      .SelectMany(relation => relation.LargePrimes))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             y = IntegerMath.Mod(y * IntegerMath.Mod(largePrime, targetN), targetN);
         }
 

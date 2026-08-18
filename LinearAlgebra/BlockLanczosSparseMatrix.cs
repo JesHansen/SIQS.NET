@@ -26,7 +26,10 @@ public sealed class BlockLanczosSparseMatrix
     private readonly ulong[][] _parallelDenseScratch;
     private readonly ulong[] _parallelDenseImage;
 
-    private BlockLanczosSparseMatrix(BlockLanczosMatrixStorage storage, int requestedParallelism)
+    private BlockLanczosSparseMatrix(
+        BlockLanczosMatrixStorage storage,
+        int requestedParallelism,
+        CancellationToken cancellationToken)
     {
         RelationCount = storage.RelationCount;
         OriginalParityColumnCount = storage.OriginalParityColumnCount;
@@ -38,29 +41,15 @@ public sealed class BlockLanczosSparseMatrix
         _denseParityColumnsView = Array.AsReadOnly(_denseParityColumns);
         _denseRowMasksView = Array.AsReadOnly(_denseRowMasks);
 
-        EffectiveParallelism = requestedParallelism == 0 ? Environment.ProcessorCount : requestedParallelism;
-        EffectiveParallelism = Math.Max(1, EffectiveParallelism);
-        _relationPartitions = PartitionRanges.ByNonzeros(_rowOffsets, EffectiveParallelism);
-        _parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = _relationPartitions.Length };
-
-        if (UseParallel)
-        {
-            // The parallel forward multiply gathers by output column instead of scattering by
-            // relation, so each worker owns a disjoint slice of y and needs no per-worker scratch.
-            // That requires the transposed adjacency (sparse column -> relations), built once here.
-            (_columnOffsets, _columnRelationIndices) = BuildColumnAdjacency();
-            _sparseColumnPartitions = PartitionRanges.ByNonzeros(_columnOffsets, _relationPartitions.Length);
-            _parallelDenseScratch = CreateScratch(_relationPartitions.Length, _denseParityColumns.Length);
-            _parallelDenseImage = new ulong[_denseParityColumns.Length];
-        }
-        else
-        {
-            _columnOffsets = Array.Empty<int>();
-            _columnRelationIndices = Array.Empty<int>();
-            _sparseColumnPartitions = Array.Empty<PartitionRange>();
-            _parallelDenseScratch = Array.Empty<ulong[]>();
-            _parallelDenseImage = Array.Empty<ulong>();
-        }
+        var workspace = BlockLanczosWorkspacePlan.Create(storage, requestedParallelism, cancellationToken);
+        EffectiveParallelism = workspace.EffectiveParallelism;
+        _relationPartitions = workspace.RelationPartitions;
+        _sparseColumnPartitions = workspace.SparseColumnPartitions;
+        _parallelOptions = workspace.ParallelOptions;
+        _columnRelationIndices = workspace.ColumnRelationIndices;
+        _columnOffsets = workspace.ColumnOffsets;
+        _parallelDenseScratch = workspace.DenseScratch;
+        _parallelDenseImage = workspace.DenseImage;
     }
 
     public int RelationCount { get; }
@@ -81,11 +70,12 @@ public sealed class BlockLanczosSparseMatrix
     public static BlockLanczosSparseMatrix FromRelationRows(
         IReadOnlyList<RelationRow> rows,
         int columnCount,
-        BlockLanczosOptions? options = null)
+        BlockLanczosOptions? options = null,
+        CancellationToken cancellationToken = default)
     {
         options ??= new BlockLanczosOptions();
-        var storage = BlockLanczosMatrixBuilder.Build(rows, columnCount, options);
-        return new BlockLanczosSparseMatrix(storage, options.Parallelism);
+        var storage = BlockLanczosMatrixBuilder.Build(rows, columnCount, options, cancellationToken);
+        return new BlockLanczosSparseMatrix(storage, options.Parallelism, cancellationToken);
     }
 
     public ReadOnlySpan<int> SparseColumnsForRelation(int relationRow)
@@ -498,33 +488,6 @@ public sealed class BlockLanczosSparseMatrix
         }
     }
 
-    private (int[] ColumnOffsets, int[] ColumnRelationIndices) BuildColumnAdjacency()
-    {
-        var offsets = new int[SparseParityColumnCount + 1];
-        foreach (var column in _columnIndices)
-        {
-            offsets[column + 1]++;
-        }
-
-        for (var column = 0; column < SparseParityColumnCount; column++)
-        {
-            offsets[column + 1] += offsets[column];
-        }
-
-        var relationIndices = new int[_columnIndices.Length];
-        var cursor = new int[SparseParityColumnCount];
-        Array.Copy(offsets, cursor, SparseParityColumnCount);
-        for (var relation = 0; relation < RelationCount; relation++)
-        {
-            for (var i = _rowOffsets[relation]; i < _rowOffsets[relation + 1]; i++)
-            {
-                relationIndices[cursor[_columnIndices[i]]++] = relation;
-            }
-        }
-
-        return (offsets, relationIndices);
-    }
-
     private void ReduceDenseScratch(ulong[] output, int outputOffset)
     {
         for (var denseRow = 0; denseRow < _denseParityColumns.Length; denseRow++)
@@ -618,14 +581,4 @@ public sealed class BlockLanczosSparseMatrix
         }
     }
 
-    private static ulong[][] CreateScratch(int workerCount, int length)
-    {
-        var scratch = new ulong[workerCount][];
-        for (var i = 0; i < scratch.Length; i++)
-        {
-            scratch[i] = new ulong[length];
-        }
-
-        return scratch;
-    }
 }

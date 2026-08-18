@@ -1,6 +1,6 @@
 @if (Status is { } jobStatus)
 {
-    <span class="badge @StatusPresentation.CssClass(jobStatus)">@SiqsTokens.ToToken(jobStatus)</span>
+    <span class="badge @StatusPresentation.CssClass(jobStatus)">@StatusPresentation.DisplayName(jobStatus)</span>
 }
 else if (PhaseStatus is { } phaseStatus)
 {

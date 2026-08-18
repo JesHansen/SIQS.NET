@@ -12,7 +12,8 @@ internal static class PartialCycleCombiner
 {
     public static List<Candidate> Combine(
         IRawRelationSource partials, BigInteger scaledN, long bound, int factorBaseCount,
-        FilteringOptions options, FilteringCounters counters, CandidateStore store)
+        FilteringOptions options, FilteringCounters counters, CandidateStore store,
+        CancellationToken cancellationToken = default)
     {
         if (options.MaxCycleLength is <= 0)
         {
@@ -30,6 +31,7 @@ internal static class PartialCycleCombiner
 
         foreach (var (locator, partial) in partials.Enumerate())
         {
+            cancellationToken.ThrowIfCancellationRequested();
             counters.RawPartials++;
             var largePrimes = RelationCongruence.NormalizeLargePrimes(partial);
             if (largePrimes.Count is < 1 or > 2)
@@ -93,10 +95,12 @@ internal static class PartialCycleCombiner
         seenPartials.Clear();
 
         // Pass 2: re-read only the cycle members and combine each cycle into a candidate.
-        var byLocator = MaterializeCycleMembers(partials, cycles);
+        cancellationToken.ThrowIfCancellationRequested();
+        var byLocator = MaterializeCycleMembers(partials, cycles, cancellationToken);
         var candidates = new List<Candidate>(cycles.Count);
         foreach (var cycle in cycles)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var members = new PartialLite[cycle.Length];
             for (var i = 0; i < cycle.Length; i++)
             {
@@ -110,11 +114,14 @@ internal static class PartialCycleCombiner
     }
 
     private static Dictionary<RawRelationLocator, PartialLite> MaterializeCycleMembers(
-        IRawRelationSource partials, List<RawRelationLocator[]> cycles)
+        IRawRelationSource partials,
+        List<RawRelationLocator[]> cycles,
+        CancellationToken cancellationToken)
     {
         var needed = new HashSet<RawRelationLocator>();
         foreach (var cycle in cycles)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             foreach (var locator in cycle)
             {
                 needed.Add(locator);
@@ -127,6 +134,7 @@ internal static class PartialCycleCombiner
         var byLocator = new Dictionary<RawRelationLocator, PartialLite>(ascending.Length);
         foreach (var (locator, record) in partials.Materialize(ascending))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             byLocator[locator] = PartialLite.From(record);
         }
 

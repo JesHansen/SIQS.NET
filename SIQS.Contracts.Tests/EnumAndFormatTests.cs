@@ -48,6 +48,7 @@ public class EnumTokenTests
     [InlineData(FactorizationStatus.Invalid, "invalid")]
     [InlineData(FactorizationStatus.NoFactor, "no_factor")]
     [InlineData(FactorizationStatus.InputPrime, "input_prime")]
+    [InlineData(FactorizationStatus.InputProbablePrime, "input_probable_prime")]
     public void FactorizationStatus_tokens_match_spec(FactorizationStatus status, string token)
     {
         Assert.Equal(token, SiqsTokens.ToToken(status));
@@ -57,6 +58,7 @@ public class EnumTokenTests
     [Theory]
     [InlineData(JobStatus.CompletedNoFactor, "completed_no_factor")]
     [InlineData(JobStatus.CompletedPrime, "completed_prime")]
+    [InlineData(JobStatus.CompletedProbablePrime, "completed_probable_prime")]
     [InlineData(JobStatus.CompletedFactorFound, "completed_factor_found")]
     [InlineData(JobStatus.CompletedTrivialFactor, "completed_trivial_factor")]
     [InlineData(JobStatus.Canceling, "canceling")]

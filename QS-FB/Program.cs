@@ -31,6 +31,7 @@ try
         Console.WriteLine(row.Status switch
         {
             FactorizationStatus.InputPrime => $"{Prefix("[factor base]")}input is prime",
+            FactorizationStatus.InputProbablePrime => $"{Prefix("[factor base]")}input is a Baillie-PSW probable prime",
             _ => $"{Prefix("[factor base]")}trivial factor found ({row.Reason}): {row.Factor1} * {row.Factor2}",
         });
         Console.WriteLine($"{Prefix("[write]")}{factorsPath}");

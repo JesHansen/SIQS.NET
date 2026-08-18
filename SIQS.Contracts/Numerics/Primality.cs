@@ -66,9 +66,9 @@ public static class Primality
 
     /// <summary>
     /// The Baillie-PSW probable-prime test: a base-2 strong Miller-Rabin test combined with a
-    /// strong Lucas test using Selfridge's parameters. No composite is known to pass it, so this
-    /// project treats a positive result as proof of primality. The test is deterministic for the
-    /// inputs it accepts (no random bases) and always terminates.
+    /// strong Lucas test using Selfridge's parameters. No composite is known to pass it, but a
+    /// positive result is a probable-prime classification, not a general primality proof. The test
+    /// uses no random bases and always terminates.
     /// </summary>
     public static bool IsBailliePswProbablePrime(BigInteger n)
     {

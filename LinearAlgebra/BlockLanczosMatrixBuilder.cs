@@ -12,7 +12,8 @@ internal static class BlockLanczosMatrixBuilder
     public static BlockLanczosMatrixStorage Build(
         IReadOnlyList<RelationRow> rows,
         int columnCount,
-        BlockLanczosOptions options)
+        BlockLanczosOptions options,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(rows);
         ArgumentNullException.ThrowIfNull(options);
@@ -22,7 +23,8 @@ internal static class BlockLanczosMatrixBuilder
         }
 
         var rowCount = rows.Count;
-        var denseParityColumns = SelectDenseParityColumns(rows, columnCount, options);
+        cancellationToken.ThrowIfCancellationRequested();
+        var denseParityColumns = SelectDenseParityColumns(rows, columnCount, options, cancellationToken);
         var denseIndexByOriginalColumn = new Dictionary<int, int>(denseParityColumns.Length);
         for (var i = 0; i < denseParityColumns.Length; i++)
         {
@@ -44,6 +46,10 @@ internal static class BlockLanczosMatrixBuilder
         var denseRowMasks = new ulong[rowCount];
         for (var r = 0; r < rowCount; r++)
         {
+            if ((r & 0xfff) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
             var sparseCount = 0;
             var previous = -1;
             foreach (var col in rows[r].Columns)
@@ -66,6 +72,10 @@ internal static class BlockLanczosMatrixBuilder
         var columnIndices = new int[rowOffsets[rowCount]];
         for (var r = 0; r < rowCount; r++)
         {
+            if ((r & 0xfff) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
             var next = rowOffsets[r];
             var previous = -1;
             foreach (var col in rows[r].Columns)
@@ -93,7 +103,8 @@ internal static class BlockLanczosMatrixBuilder
     private static int[] SelectDenseParityColumns(
         IReadOnlyList<RelationRow> rows,
         int columnCount,
-        BlockLanczosOptions options)
+        BlockLanczosOptions options,
+        CancellationToken cancellationToken)
     {
         if (options.PostLanczosRows == 0 ||
             Math.Min(rows.Count, columnCount) < options.MinPostLanczosDimension ||
@@ -103,8 +114,13 @@ internal static class BlockLanczosMatrixBuilder
         }
 
         var weights = new int[columnCount];
+        var rowIndex = 0;
         foreach (var row in rows)
         {
+            if ((rowIndex++ & 0xfff) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
             var previous = -1;
             foreach (var col in row.Columns)
             {

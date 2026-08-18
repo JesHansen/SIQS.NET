@@ -20,9 +20,9 @@ dotnet test --project Factorbase.Tests/Factorbase.Tests.csproj
 `--project` switch rather than a bare path.)
 
 Examples in this repository are written for PowerShell, but the solution is not Windows-only — CI
-builds and tests on both Linux and Windows, and `build.ps1` runs under cross-platform PowerShell 7
-(`pwsh ./build.ps1`). On Linux and macOS the built tools have no `.exe` suffix, e.g.
-`./QS/bin/Release/net10.0/qs`.
+builds and tests on both Linux and Windows, and both `build.ps1` (command-line release) and
+`build-ui.ps1` (UI deployment) run under cross-platform PowerShell 7. On Linux and macOS the built
+tools have no `.exe` suffix, e.g. `./QS/bin/Release/net10.0/qs`.
 
 ## Project layout
 

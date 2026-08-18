@@ -12,23 +12,27 @@ public sealed record BlockLanczosProgress(
 
 public static class BlockLanczos
 {
-    public const int DefaultMaxDependencies = 1024;
-
-    private const ulong AllBits = ulong.MaxValue;
-    private const long ProgressIntervalMilliseconds = 10_000;
-    private const int ParallelVectorThreshold = 8192;
+    /// <summary>
+    /// One Block Lanczos solve yields at most 64 candidate columns. The budget is therefore a cap
+    /// on that one successful block; additional seeds are retries only when no dependency verifies.
+    /// </summary>
+    public const int DefaultMaxDependencies = 64;
+    public const int MaximumDependencies = 64;
 
     public static SolveResult Solve(
         IReadOnlyList<RelationRow> rows,
         int columnCount,
         int maxDependencies = DefaultMaxDependencies,
         BlockLanczosOptions? options = null,
-        IProgress<BlockLanczosProgress>? progress = null)
+        IProgress<BlockLanczosProgress>? progress = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(rows);
-        if (maxDependencies <= 0)
+        cancellationToken.ThrowIfCancellationRequested();
+        if (BlockLanczosRetryPolicy.IsDisabled(maxDependencies))
         {
-            return new SolveResult(Array.Empty<Dependency>(), 0, Solver: "block-lanczos");
+            return new SolveResult(
+                Array.Empty<Dependency>(), 0, Solver: "block-lanczos", StopReason: "budget-disabled");
         }
 
         // Already-zero rows are true dependencies. Emit them first because they require no matrix
@@ -38,6 +42,10 @@ public static class BlockLanczos
         var zeroRowIds = new List<int>();
         for (var rowId = 0; rowId < rows.Count; rowId++)
         {
+            if ((rowId & 0xfff) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
             if (rows[rowId].Count == 0)
             {
                 zeroRowIds.Add(rowId);
@@ -55,7 +63,8 @@ public static class BlockLanczos
                 .Take(maxDependencies)
                 .Select(id => new Dependency(ImmutableArray.Create(id)))
                 .ToList();
-            return new SolveResult(zeroRowsOnly, 0, Solver: "block-lanczos");
+            return new SolveResult(
+                zeroRowsOnly, 0, Solver: "block-lanczos", StopReason: "zero-rows-only");
         }
 
         var dependencies = zeroRowIds
@@ -65,51 +74,56 @@ public static class BlockLanczos
         var remainingDependencyBudget = maxDependencies - dependencies.Count;
         if (remainingDependencyBudget == 0)
         {
-            return new SolveResult(dependencies, 0, Solver: "block-lanczos");
+            return new SolveResult(
+                dependencies, 0, Solver: "block-lanczos", StopReason: "budget-satisfied-by-zero-rows");
         }
 
         options ??= new BlockLanczosOptions();
-        var matrix = BlockLanczosSparseMatrix.FromRelationRows(nonZeroRows, columnCount, options);
+        var matrix = BlockLanczosSparseMatrix.FromRelationRows(
+            nonZeroRows, columnCount, options, cancellationToken);
         if (matrix.RelationCount == 0)
         {
-            return new SolveResult(dependencies, 0, Solver: "block-lanczos");
+            return new SolveResult(
+                dependencies, 0, Solver: "block-lanczos", StopReason: "empty-matrix");
         }
 
         var seen = new HashSet<Dependency>(dependencies);
-        var lanczosDependencyCount = 0;
-        var runs = 0;
-        var lastDimensionsSolved = 0;
-        var runMilliseconds = new List<long>(4);
-        var runDimensions = new List<int>(4);
-        for (var retry = 0; retry < 4 && lanczosDependencyCount < remainingDependencyBudget; retry++)
+        var telemetry = new BlockLanczosRunTelemetry();
+        for (var retry = 0;
+             BlockLanczosRetryPolicy.ShouldStartRun(retry, telemetry.VerifiedDependencies);
+             retry++)
         {
-            runs++;
+            cancellationToken.ThrowIfCancellationRequested();
+            var run = telemetry.StartRun();
             var runWatch = System.Diagnostics.Stopwatch.StartNew();
             progress?.Report(new BlockLanczosProgress(
                 "run-start",
-                runs,
+                run,
                 0,
                 0,
                 matrix.SparseParityColumnCount,
                 TimeSpan.Zero));
-            if (TrySolveOnce(matrix, retry, options.Seed, runWatch, progress, out var candidateBlock, out var dimensionsSolved))
+            if (BlockLanczosRecurrence.TrySolveOnce(
+                matrix, retry, options.Seed, runWatch, progress, cancellationToken,
+                out var candidateBlock, out var dimensionsSolved))
             {
                 runWatch.Stop();
-                runMilliseconds.Add(runWatch.ElapsedMilliseconds);
-                runDimensions.Add(dimensionsSolved);
-                lastDimensionsSolved = Math.Max(lastDimensionsSolved, dimensionsSolved);
+                telemetry.RecordRun(runWatch.Elapsed, dimensionsSolved);
                 progress?.Report(new BlockLanczosProgress(
                     "extracting",
-                    runs,
+                    run,
                     0,
                     dimensionsSolved,
                     matrix.SparseParityColumnCount,
                     runWatch.Elapsed));
                 var extracted = BlockLanczosDependencyExtractor.ExtractVerified(
-                    nonZeroRows, columnCount, candidateBlock, remainingDependencyBudget - lanczosDependencyCount);
+                    nonZeroRows, columnCount, candidateBlock,
+                    remainingDependencyBudget - telemetry.VerifiedDependencies, cancellationToken);
+                telemetry.RecordCandidates(extracted.Count);
                 var acceptedBeforeExtraction = dependencies.Count;
                 foreach (var dependency in extracted)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (!matrix.DenseRowsAreZero(dependency.RowIds))
                     {
                         continue;
@@ -119,8 +133,8 @@ public static class BlockLanczos
                     if (seen.Add(mapped))
                     {
                         dependencies.Add(mapped);
-                        lanczosDependencyCount++;
-                        if (lanczosDependencyCount >= remainingDependencyBudget)
+                        telemetry.RecordVerifiedDependency();
+                        if (telemetry.VerifiedDependencies >= remainingDependencyBudget)
                         {
                             break;
                         }
@@ -129,7 +143,7 @@ public static class BlockLanczos
 
                 progress?.Report(new BlockLanczosProgress(
                     dependencies.Count > acceptedBeforeExtraction ? "dependencies-found" : "no-dependencies",
-                    runs,
+                    run,
                     dependencies.Count - acceptedBeforeExtraction,
                     dimensionsSolved,
                     matrix.SparseParityColumnCount,
@@ -139,29 +153,21 @@ public static class BlockLanczos
                 {
                     progress?.Report(new BlockLanczosProgress(
                         "run-complete",
-                        runs,
+                        run,
                         0,
                         dimensionsSolved,
                         matrix.SparseParityColumnCount,
                         runWatch.Elapsed));
-                    return new SolveResult(
-                        dependencies,
-                        dimensionsSolved,
-                        Solver: "block-lanczos",
-                        LanczosRuns: runs,
-                        LanczosDependencies: lanczosDependencyCount,
-                        LanczosRunMilliseconds: runMilliseconds.ToArray(),
-                        LanczosRunDimensions: runDimensions.ToArray());
+                    return telemetry.Result(dependencies, dimensionsSolved, "successful-block");
                 }
             }
             else
             {
                 runWatch.Stop();
-                runMilliseconds.Add(runWatch.ElapsedMilliseconds);
-                runDimensions.Add(0);
+                telemetry.RecordRun(runWatch.Elapsed, dimensionsSolved: 0);
                 progress?.Report(new BlockLanczosProgress(
                     "run-failed",
-                    runs,
+                    run,
                     0,
                     0,
                     matrix.SparseParityColumnCount,
@@ -169,22 +175,25 @@ public static class BlockLanczos
             }
         }
 
-        return new SolveResult(
-            dependencies,
-            lastDimensionsSolved,
-            Solver: "block-lanczos",
-            LanczosRuns: runs,
-            LanczosDependencies: lanczosDependencyCount,
-            LanczosRunMilliseconds: runMilliseconds.ToArray(),
-            LanczosRunDimensions: runDimensions.ToArray());
+        return telemetry.Result(
+            dependencies, telemetry.MaximumDimensionsSolved, "retry-limit-exhausted");
     }
+}
 
-    private static bool TrySolveOnce(
+/// <summary>Allocation-stable one-seed Block Lanczos recurrence and its reusable vector workspace.</summary>
+internal static class BlockLanczosRecurrence
+{
+    private const ulong AllBits = ulong.MaxValue;
+    private const long ProgressIntervalMilliseconds = 10_000;
+    private const int ParallelVectorThreshold = 8192;
+
+    internal static bool TrySolveOnce(
         BlockLanczosSparseMatrix matrix,
         int retry,
         ulong seed,
         System.Diagnostics.Stopwatch runWatch,
         IProgress<BlockLanczosProgress>? progress,
+        CancellationToken cancellationToken,
         out ulong[] candidateBlock,
         out int dimensionsSolved)
     {
@@ -198,7 +207,7 @@ public static class BlockLanczos
         var vtAv = new[] { new ulong[64], new ulong[64] };
         var vtA2v = new[] { new ulong[64], new ulong[64] };
         var selected = new[] { new int[64], new int[64] };
-        var vectorWorkspace = new VectorWorkspace(n, matrix.EffectiveParallelism);
+        var vectorWorkspace = new VectorWorkspace(n, matrix.EffectiveParallelism, cancellationToken);
         var dim1 = 64;
         var mask1 = AllBits;
 
@@ -220,6 +229,7 @@ public static class BlockLanczos
         var reportedSlowConvergence = false;
         for (var iter = 1; iter <= iterationBound; iter++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             matrix.MultiplySymmetric(v[0], vnext, multiplyScratch);
             vtAv[0] = TransposeMultiply(v[0], vnext, vectorWorkspace);
             vtA2v[0] = TransposeMultiply(vnext, vnext, vectorWorkspace);
@@ -352,7 +362,9 @@ public static class BlockLanczos
         matrix.MultiplyA(v[0], av, 0, sparseProductLength);
         matrix.MultiplyDenseRows(x, ax, sparseProductLength, denseProductLength);
         matrix.MultiplyDenseRows(v[0], av, sparseProductLength, denseProductLength);
-        candidateBlock = BlockLanczosCandidateCombiner.Combine(matrix.RelationCount, fullProductLength, x, v[0], ax, av);
+        cancellationToken.ThrowIfCancellationRequested();
+        candidateBlock = BlockLanczosCandidateCombiner.Combine(
+            matrix.RelationCount, fullProductLength, x, v[0], ax, av, cancellationToken);
         return true;
     }
 
@@ -431,7 +443,10 @@ public static class BlockLanczos
 
     internal sealed class VectorWorkspace
     {
-        internal VectorWorkspace(int length, int requestedParallelism)
+        internal VectorWorkspace(
+            int length,
+            int requestedParallelism,
+            CancellationToken cancellationToken = default)
         {
             Length = length;
             var partitionCount = length < ParallelVectorThreshold
@@ -444,7 +459,11 @@ public static class BlockLanczos
                 Partials[i] = new ulong[64];
             }
 
-            ParallelOptions = new ParallelOptions { MaxDegreeOfParallelism = Partitions.Length };
+            ParallelOptions = new ParallelOptions
+            {
+                MaxDegreeOfParallelism = Partitions.Length,
+                CancellationToken = cancellationToken,
+            };
         }
 
         internal int Length { get; }

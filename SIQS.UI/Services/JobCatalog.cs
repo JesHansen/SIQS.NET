@@ -137,6 +137,6 @@ public sealed class JobCatalog
     private static JobKind Kind(string jobId) => jobId.StartsWith('D') ? JobKind.Distributed : JobKind.OneShot;
 
     private static bool IsTerminal(JobStatus status) => status is JobStatus.Failed or JobStatus.Canceled
-        or JobStatus.CompletedNoFactor or JobStatus.CompletedPrime
+        or JobStatus.CompletedNoFactor or JobStatus.CompletedPrime or JobStatus.CompletedProbablePrime
         or JobStatus.CompletedFactorFound or JobStatus.CompletedTrivialFactor;
 }

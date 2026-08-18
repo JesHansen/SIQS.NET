@@ -38,7 +38,7 @@ public sealed record FactorsDocument
 /// </summary>
 public static class FactorsFile
 {
-    private const string ColumnsValue = "dependency_id,status,gcd_minus,gcd_plus,factor1,factor2,reason,factor1_composite,factor2_composite";
+    private const string ColumnsValue = "dependency_id,status,gcd_minus,gcd_plus,factor1,factor2,reason,factor1_composite,factor2_composite,primality_test,primality_range";
 
     /// <summary>Serializes a factors document to its full UTF-8 text form.</summary>
     public static string Write(FactorsDocument document)
@@ -65,6 +65,8 @@ public static class FactorsFile
                 r.Reason ?? string.Empty,
                 OptionalBool(r.Factor1IsComposite),
                 OptionalBool(r.Factor2IsComposite),
+                r.PrimalityTest ?? string.Empty,
+                r.PrimalityRange ?? string.Empty,
             })).Append('\n');
         }
 
@@ -106,7 +108,9 @@ public static class FactorsFile
                 Factor2: OptionalParse(fields[5]),
                 Reason: fields.Count > 6 && fields[6].Length > 0 ? fields[6] : null,
                 Factor1IsComposite: fields.Count > 7 ? OptionalBoolParse(fields[7]) : null,
-                Factor2IsComposite: fields.Count > 8 ? OptionalBoolParse(fields[8]) : null));
+                Factor2IsComposite: fields.Count > 8 ? OptionalBoolParse(fields[8]) : null,
+                PrimalityTest: fields.Count > 9 && fields[9].Length > 0 ? fields[9] : null,
+                PrimalityRange: fields.Count > 10 && fields[10].Length > 0 ? fields[10] : null));
         }
 
         return new FactorsDocument(

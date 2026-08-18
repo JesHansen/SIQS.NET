@@ -27,6 +27,29 @@ Each selector carries the reasoning for its tiers in a comment, including the ca
 change was measured and rejected. Read those before changing a default; several obvious-looking
 improvements have already been tried.
 
+## Supported request limits
+
+All capstone CLI, UI, pipeline, and distributed submissions pass through the same normalized-request
+policy before a job directory or background task is created. Target-dependent sieve defaults are
+checked again after the factor base supplies the remaining geometry. These are support and
+availability limits, not recommended tuning values:
+
+| Control | Maximum | Rationale |
+| --- | ---: | --- |
+| Target size | 150 decimal digits | Bounds public-service primality and big-integer work beyond the measured C115 profiles. |
+| Factor-base bound | 60,000,000 | `PrimeSieve` allocates a directly indexed Boolean array; this is the widest tuned C110+ profile. |
+| Explicit multiplier | 1,000,000 | Covers the small Knuth–Schroeppel geometry without admitting arbitrary growth of `kN`. |
+| Sieve half interval | 33,554,432 | Widest measured profile; the full `2M+1` interval must also fit the signed 32-bit coordinator representation. |
+| Sieve block size | 4,194,304 entries | Bounds each worker's byte sieve and offset maps; it must not exceed `2M+1`. |
+| Polynomial count / relation target | 1,000,000,000 / 5,000,000 | Bounds scheduled work and the matrix's 32-bit row space while retaining the widest defaults. |
+| Output batch | 1,000,000 records | Bounds per-batch materialization and publication work. |
+| A-prime count / window | 16 / 1,024 | Bounds combination and Gray-code family growth; count must not exceed the window. |
+| LP1 / LP2 bound | 64,000,000,000 / 1,000,000,000,000 | Keeps residual splitting inside the supported 64-bit/BigInteger paths without unbounded search geometry. |
+| Error margin | 256 bits | Bounds false-positive candidate growth. |
+| Sieving / linear-algebra parallelism | 256 | Prevents accidental process-sized worker and partition counts; zero still means processor count. |
+| Bucket / resieve cutoff | 60,000,000 | Matches the widest factor-base representation; resieving requires a larger enabled bucket cutoff. |
+| Dependencies | 64 | One Block Lanczos candidate block; later seeds are retries, not extra dependency harvesting. |
+
 ## Run control
 
 | Option | Default | What it does |
@@ -92,7 +115,7 @@ Filtering options are accepted by `qs-filter`; the pipeline uses the defaults.
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `--max-dependencies <n>` | `BlockLanczos.DefaultMaxDependencies` | Cap on how many null-space vectors to extract. Each dependency is an independent chance at a non-trivial factor; more are only useful when the first few give trivial ones. |
+| `--max-dependencies <n>` | 64 | Cap (1–64) on verified vectors emitted from one successful 64-column Block Lanczos solve. Later deterministic seeds are failure retries, not a request to accumulate more vectors after success. |
 | `--linalg-parallelism <n>` | 0 (every core) | Block Lanczos threads. |
 
 `qs-linalg` additionally accepts `--linalg-seed <n>` (default fixed), the seed for the random blocks

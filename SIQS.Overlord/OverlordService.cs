@@ -1,3 +1,4 @@
+using SIQS.Contracts;
 using SIQS.Contracts.Distributed;
 using SIQS.Pipeline;
 
@@ -38,7 +39,13 @@ public sealed record OverlordOptions
     /// replaced by compact durable receipts, so this bounds transient backlog rather than the whole
     /// distributed relation stream.
     /// </summary>
-    public long MaxRelationSpoolBytes { get; init; } = 50L * 1024 * 1024 * 1024;
+    public long MaxRelationBacklogBytes { get; init; } = 50L * 1024 * 1024 * 1024;
+
+    /// <summary>Maximum total bytes retained beneath the per-job relation inbox.</summary>
+    public long MaxRelationInboxBytes { get; init; } = 50L * 1024 * 1024 * 1024 + 64L * 1024 * 1024;
+
+    /// <summary>Keep upload receipts after a terminal result. Canonical relation artifacts are unaffected.</summary>
+    public bool RetainRelationInboxOnCompletion { get; init; }
 
     internal int ResolveLeaseChunkSize(int? parallelism)
         => ResolveLeaseChunkSize(parallelism, sieving: null);
@@ -88,7 +95,8 @@ public sealed class OverlordService : IAsyncDisposable
     private OverlordJob? _job;
     private CancellationTokenSource? _cts;
     private Task<FactorizationJobResult>? _running;
-    private int _disposeState;
+    private volatile bool _accepting = true;
+    private Task? _stopTask;
 
     public OverlordService(string runsRoot, OverlordOptions? options = null)
     {
@@ -110,10 +118,11 @@ public sealed class OverlordService : IAsyncDisposable
         }
 
         if (_options.MaxRelationChunkBytes < 1 ||
-            _options.MaxRelationSpoolBytes < _options.MaxRelationChunkBytes)
+            _options.MaxRelationBacklogBytes < _options.MaxRelationChunkBytes ||
+            _options.MaxRelationInboxBytes < _options.MaxRelationBacklogBytes)
         {
             throw new ArgumentOutOfRangeException(
-                nameof(options), "The relation spool must hold at least one positive-size chunk.");
+                nameof(options), "Relation inbox quotas must be positive, ordered, and hold one maximum-size chunk.");
         }
 
         Directory.CreateDirectory(_runsRoot);
@@ -133,11 +142,44 @@ public sealed class OverlordService : IAsyncDisposable
     /// <summary>The background pipeline task, for callers that want to await the terminal result.</summary>
     public Task<FactorizationJobResult>? Completion => _running;
 
+    /// <summary>Maximum application payload bytes accepted by one relation-upload request.</summary>
+    public long MaxRelationChunkBytes => _options.MaxRelationChunkBytes;
+
+    /// <summary>Lists interrupted distributed jobs for explicit operator selection.</summary>
+    public IReadOnlyList<RecoverableDistributedJob> ListRecoverableJobs()
+    {
+        var jobs = new List<RecoverableDistributedJob>();
+        foreach (var directory in Directory.EnumerateDirectories(_runsRoot, "D*"))
+        {
+            var jobId = Path.GetFileName(directory);
+            if (!IsDistributedJobId(jobId)) continue;
+            try
+            {
+                var state = JobStore.LoadSnapshot(directory);
+                if (IsTerminal(state.Status)) continue;
+                jobs.Add(new RecoverableDistributedJob(jobId, state.TargetN, state.Status, true));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FormatException or ArgumentException)
+            {
+                jobs.Add(new RecoverableDistributedJob(jobId, string.Empty, JobStatus.Failed, false, ex.Message));
+            }
+        }
+
+        return jobs.OrderBy(job => job.JobId, StringComparer.Ordinal).ToArray();
+    }
+
     /// <summary>Starts a distributed factorization. Throws if one is already active.</summary>
     public void Submit(FactorizationRequest request)
     {
+        var normalizedRequest = new SiqsPipeline().NormalizeAndValidate(request);
         lock (_gate)
         {
+            if (!_accepting)
+            {
+                throw new InvalidOperationException(
+                    "The application is shutting down and no longer accepts distributed jobs.");
+            }
+
             if (_job is { Phase: not (OverlordPhase.Completed or OverlordPhase.Faulted) })
             {
                 throw new InvalidOperationException("A distributed job is already active.");
@@ -154,13 +196,59 @@ public sealed class OverlordService : IAsyncDisposable
                 _options.LeaseChunkSize,
                 _options.UploadGracePeriod,
                 _options.MaxRelationChunkBytes,
-                _options.MaxRelationSpoolBytes);
+                _options.MaxRelationBacklogBytes,
+                _options.MaxRelationInboxBytes);
             var pipeline = new SiqsPipeline(executor);
-            var normalized = request with { RunDirectory = directory };
+            var normalized = normalizedRequest with { RunDirectory = directory };
 
             _job = job;
             _cts = new CancellationTokenSource();
             _running = Task.Run(() => RunPipelineAsync(pipeline, job, normalized, jobId, _cts.Token));
+        }
+
+        RaiseChanged();
+    }
+
+    /// <summary>Explicitly resumes one interrupted distributed job discovered under the runs root.</summary>
+    public void Recover(string jobId)
+    {
+        if (!IsDistributedJobId(jobId))
+        {
+            throw new ArgumentException("Distributed job id has an invalid format.", nameof(jobId));
+        }
+
+        var directory = Path.Combine(_runsRoot, jobId);
+        var state = JobStore.LoadSnapshot(directory);
+        if (state.JobId != jobId || IsTerminal(state.Status))
+        {
+            throw new InvalidOperationException("The selected distributed job is not recoverable.");
+        }
+
+        lock (_gate)
+        {
+            if (!_accepting)
+            {
+                throw new InvalidOperationException(
+                    "The application is shutting down and no longer accepts distributed jobs.");
+            }
+
+            if (_job is { Phase: not (OverlordPhase.Completed or OverlordPhase.Faulted) })
+            {
+                throw new InvalidOperationException("A distributed job is already active.");
+            }
+
+            var job = new OverlordJob(jobId, state.TargetN, directory);
+            job.Changed += RaiseChanged;
+            var executor = new DistributedSievingPhaseExecutor(
+                new RealPhaseExecutor(), job, _options.LeaseChunkSize, _options.UploadGracePeriod,
+                _options.MaxRelationChunkBytes, _options.MaxRelationBacklogBytes,
+                _options.MaxRelationInboxBytes);
+            var pipeline = new SiqsPipeline(executor);
+
+            _job = job;
+            _cts = new CancellationTokenSource();
+            _running = Task.Run(() => RunRecoveredPipelineAsync(
+                pipeline, job, directory, _cts.Token));
         }
 
         RaiseChanged();
@@ -175,11 +263,16 @@ public sealed class OverlordService : IAsyncDisposable
 
     /// <summary>The active job descriptor, or null when nothing is available to sieve.</summary>
     public JobDescriptor? TryGetJob()
-        => Current is { Phase: OverlordPhase.Sieving } job ? job.Descriptor : null;
+        => _accepting && Current is { Phase: OverlordPhase.Sieving } job ? job.Descriptor : null;
 
     /// <summary>Leases a slice of work, or null when none is currently available.</summary>
     public LeaseResponse? TryLease(int? parallelism = null)
     {
+        if (!_accepting)
+        {
+            return null;
+        }
+
         if (Current is not { Phase: OverlordPhase.Sieving } job)
         {
             return null;
@@ -206,7 +299,6 @@ public sealed class OverlordService : IAsyncDisposable
         var inbox = job.BeginChunkUpload(leaseId, _options.LeaseTtl);
         if (inbox is null)
         {
-            await body.CopyToAsync(Stream.Null, cancellationToken).ConfigureAwait(false);
             return new RelationChunkResponse(
                 false, sequence, 0, false, "The job or lease is no longer accepting relation chunks.");
         }
@@ -262,40 +354,32 @@ public sealed class OverlordService : IAsyncDisposable
 
     public void Cancel() => _cts?.Cancel();
 
+    /// <summary>Stops admission, seals accepted uploads, cancels the pipeline, and joins all work.</summary>
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        Task stopTask;
+        lock (_gate)
+        {
+            _accepting = false;
+            _stopTask ??= StopCoreAsync(_job, _cts, _running);
+            stopTask = _stopTask;
+        }
+
+        return stopTask.WaitAsync(cancellationToken);
+    }
+
     /// <summary>
     /// Cancels and joins the background pipeline so its event log and artifact files are closed
     /// before the owning application or test removes the run directory.
     /// </summary>
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposeState, 1) != 0)
-        {
-            return;
-        }
-
-        CancellationTokenSource? cancellation;
-        Task<FactorizationJobResult>? running;
+        await StopAsync(CancellationToken.None).ConfigureAwait(false);
         lock (_gate)
         {
-            cancellation = _cts;
-            running = _running;
+            _cts?.Dispose();
+            _cts = null;
         }
-
-        cancellation?.Cancel();
-        if (running is not null)
-        {
-            try
-            {
-                await running.ConfigureAwait(false);
-            }
-            catch (Exception)
-            {
-                // Completion exposes pipeline failures to callers. Disposal only guarantees that
-                // background work has stopped and must not mask an exception already in flight.
-            }
-        }
-
-        cancellation?.Dispose();
     }
 
     private async Task<FactorizationJobResult> RunPipelineAsync(
@@ -304,6 +388,7 @@ public sealed class OverlordService : IAsyncDisposable
         try
         {
             var result = await pipeline.RunAsync(request, progress: null, cancellationToken, jobId).ConfigureAwait(false);
+            await job.CleanupInboxAsync(_options.RetainRelationInboxOnCompletion).ConfigureAwait(false);
             job.Finish(DiscoveredFactors.From(result.Factors));
             return result;
         }
@@ -314,5 +399,60 @@ public sealed class OverlordService : IAsyncDisposable
         }
     }
 
+    private async Task<FactorizationJobResult> RunRecoveredPipelineAsync(
+        SiqsPipeline pipeline,
+        OverlordJob job,
+        string directory,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await pipeline.ResumeAsync(
+                directory, overrides: null, progress: null, cancellationToken).ConfigureAwait(false);
+            await job.CleanupInboxAsync(_options.RetainRelationInboxOnCompletion).ConfigureAwait(false);
+            job.Finish(DiscoveredFactors.From(result.Factors));
+            return result;
+        }
+        catch (Exception ex)
+        {
+            job.Fault($"Distributed recovery failed: {ex.Message}");
+            throw;
+        }
+    }
+
     private void RaiseChanged() => Changed?.Invoke();
+
+    private static bool IsTerminal(JobStatus status)
+        => status is JobStatus.CompletedNoFactor or JobStatus.CompletedPrime or JobStatus.CompletedProbablePrime or
+            JobStatus.CompletedFactorFound or JobStatus.CompletedTrivialFactor;
+
+    private static bool IsDistributedJobId(string jobId)
+        => jobId.Length == 21 && jobId[0] == 'D' &&
+           DateTimeOffset.TryParseExact(
+               jobId[1..], "yyyyMMdd-HHmmss-ffff", null,
+               System.Globalization.DateTimeStyles.None, out _);
+
+    private static async Task StopCoreAsync(
+        OverlordJob? job,
+        CancellationTokenSource? cancellation,
+        Task<FactorizationJobResult>? running)
+    {
+        var drain = job?.StopAcceptingAndDrainAsync() ?? Task.CompletedTask;
+        cancellation?.Cancel();
+        try
+        {
+            await Task.WhenAll(drain, running ?? Task.CompletedTask).ConfigureAwait(false);
+        }
+        catch (Exception) when (running?.IsCompleted == true)
+        {
+            // Pipeline failures remain observable through Completion; shutdown still joined it.
+        }
+    }
 }
+
+public sealed record RecoverableDistributedJob(
+    string JobId,
+    string TargetN,
+    JobStatus Status,
+    bool IsEligible,
+    string? Error = null);

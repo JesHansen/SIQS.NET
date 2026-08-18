@@ -20,7 +20,7 @@ public class BlockLanczosVectorBenchmarks
     private ulong[][] _matrices = null!;
     private ulong[] _vnext = null!;
     private ulong[] _x = null!;
-    private BlockLanczos.VectorWorkspace _workspace = null!;
+    private BlockLanczosRecurrence.VectorWorkspace _workspace = null!;
 
     [GlobalSetup]
     public void Setup()
@@ -34,7 +34,7 @@ public class BlockLanczosVectorBenchmarks
         _vnext = SparseMatrixFixture.BuildBlock(Length, seed: 0x9100);
         _x = SparseMatrixFixture.BuildBlock(Length, seed: 0xA100);
         var effectiveParallelism = Parallelism == 0 ? Environment.ProcessorCount : Parallelism;
-        _workspace = new BlockLanczos.VectorWorkspace(Length, effectiveParallelism);
+        _workspace = new BlockLanczosRecurrence.VectorWorkspace(Length, effectiveParallelism);
     }
 
     [Benchmark(Baseline = true)]

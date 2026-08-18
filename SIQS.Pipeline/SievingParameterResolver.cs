@@ -31,7 +31,9 @@ public static class SievingParameterResolver
         parameters = parameters with
         {
             PolynomialCount = sieving.PolynomialCount
-                ?? SievingParameters.AvailablePolynomialSupply(parameters.APrimeWindowSize, parameters.APrimeCount),
+                ?? Math.Min(
+                    FactorizationRequestLimits.MaxPolynomialCount,
+                    SievingParameters.AvailablePolynomialSupply(parameters.APrimeWindowSize, parameters.APrimeCount)),
             // Honor an explicit CLI/persisted token (the request validator has already rejected any
             // unrecognized value); otherwise auto-select from the effective LP2 bound so an overridden
             // bound above 2³² still gets the rho fallback it needs for > 64-bit residuals.
@@ -48,6 +50,30 @@ public static class SievingParameterResolver
 
         ValidateTwoLargePrimeConfiguration(parameters);
         ValidateSmallPrimeVariationConfiguration(parameters);
+        FactorizationRequestValidator.NormalizeAndValidate(request with
+        {
+            Sieving = new SievingRunOptions
+            {
+                HalfInterval = parameters.SieveHalfInterval,
+                PolynomialCount = parameters.PolynomialCount,
+                RelationTarget = parameters.RelationTarget,
+                LargePrimeBound = parameters.LargePrimeBound,
+                ErrorMargin = parameters.ErrorMargin,
+                OutputBatchSize = parameters.OutputBatchSize,
+                APrimeCount = parameters.APrimeCount,
+                APrimeWindowSize = parameters.APrimeWindowSize,
+                Parallelism = parameters.Parallelism,
+                // An automatic block may intentionally exceed a tiny interval; the worker clamps
+                // it to the interval. Only an explicit block/interval pair is rejected as wasteful.
+                BlockSize = request.Sieving.BlockSize is null ? null : parameters.SieveBlockSize,
+                BucketLargePrimeCutoff = parameters.BucketLargePrimeCutoff,
+                ResieveLargePrimeCutoff = parameters.ResieveLargePrimeCutoff,
+                EnableTwoLargePrimes = parameters.EnableTwoLargePrimes,
+                LargePrime2Bound = parameters.LargePrime2Bound,
+                LargePrime2ThresholdBound = parameters.LargePrime2ThresholdBound,
+                CofactorSplitter = CofactorSplitterKinds.ToToken(parameters.CofactorSplitter),
+            },
+        });
         return parameters;
     }
 

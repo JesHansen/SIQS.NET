@@ -7,7 +7,8 @@ internal static class StatusPresentation
 {
     public static string CssClass(JobStatus status) => status switch
     {
-        JobStatus.CompletedFactorFound or JobStatus.CompletedTrivialFactor or JobStatus.CompletedPrime => "ok",
+        JobStatus.CompletedFactorFound or JobStatus.CompletedTrivialFactor or JobStatus.CompletedPrime or
+            JobStatus.CompletedProbablePrime => "ok",
         JobStatus.Failed => "fail",
         JobStatus.Canceled or JobStatus.Canceling => "warn",
         JobStatus.Running => "run",
@@ -34,5 +35,12 @@ internal static class StatusPresentation
         SiqsPhase.LinearAlgebra => "Linear algebra",
         SiqsPhase.SquareRoot => "Square root",
         _ => SiqsTokens.ToToken(phase),
+    };
+
+    public static string DisplayName(JobStatus status) => status switch
+    {
+        JobStatus.CompletedPrime => "proven prime",
+        JobStatus.CompletedProbablePrime => "probable prime",
+        _ => SiqsTokens.ToToken(status),
     };
 }

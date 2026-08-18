@@ -20,7 +20,8 @@ public sealed class DistributedSievingPhaseExecutor : IPhaseExecutor
     private readonly int _leaseChunkSize;
     private readonly TimeSpan _uploadGracePeriod;
     private readonly long _maxRelationChunkBytes;
-    private readonly long _maxRelationSpoolBytes;
+    private readonly long _maxRelationBacklogBytes;
+    private readonly long _maxRelationInboxBytes;
 
     public DistributedSievingPhaseExecutor(
         IPhaseExecutor inner,
@@ -28,14 +29,16 @@ public sealed class DistributedSievingPhaseExecutor : IPhaseExecutor
         int leaseChunkSize,
         TimeSpan uploadGracePeriod,
         long maxRelationChunkBytes,
-        long maxRelationSpoolBytes)
+        long maxRelationBacklogBytes,
+        long maxRelationInboxBytes)
     {
         _inner = inner;
         _job = job;
         _leaseChunkSize = leaseChunkSize;
         _uploadGracePeriod = uploadGracePeriod;
         _maxRelationChunkBytes = maxRelationChunkBytes;
-        _maxRelationSpoolBytes = maxRelationSpoolBytes;
+        _maxRelationBacklogBytes = maxRelationBacklogBytes;
+        _maxRelationInboxBytes = maxRelationInboxBytes;
     }
 
     public Task<PhaseResult> RunFactorBaseAsync(PhaseContext context) => _inner.RunFactorBaseAsync(context);
@@ -61,11 +64,14 @@ public sealed class DistributedSievingPhaseExecutor : IPhaseExecutor
             factorBase, parameters.LargePrimeBound, parameters.EnableTwoLargePrimes ? parameters.LargePrime2Bound : null);
         var sink = new RawRelationBatchFileSink(context.JobDirectory, metadata, parameters.OutputBatchSize);
         var ingest = new RelationIngest(verifier, sink, ReadExistingRelations(context.JobDirectory));
-        var ledger = new LeaseLedger(aCount, _leaseChunkSize);
+        var descriptor = BuildDescriptor(_job.JobId, factorBase, parameters, aCount);
+        DistributedJobDescriptorStore.ValidateOrCreate(context.JobDirectory, descriptor);
+        var ledger = new LeaseLedger(aCount, _leaseChunkSize, context.JobDirectory);
         var inbox = new DurableRelationInbox(
             context.JobDirectory,
             _maxRelationChunkBytes,
-            _maxRelationSpoolBytes,
+            _maxRelationBacklogBytes,
+            _maxRelationInboxBytes,
             _job.IngestDurableChunk,
             _job.CompleteDurableLease,
             exception => _job.Fault($"Relation inbox failed: {exception.Message}"));
@@ -73,7 +79,7 @@ public sealed class DistributedSievingPhaseExecutor : IPhaseExecutor
         // Use the Overlord job id (also the run-directory name) so the descriptor, leases, and uploads
         // all share one id; the pipeline's internal job id in job.json is an implementation detail.
         _job.BeginSieving(
-            BuildDescriptor(_job.JobId, factorBase, parameters, aCount),
+            descriptor,
             ledger,
             ingest,
             inbox,

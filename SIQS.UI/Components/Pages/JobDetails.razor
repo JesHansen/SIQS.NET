@@ -5,6 +5,7 @@
 @inject FactorizationJobService Jobs
 @inject OverlordService Overlord
 @inject ArtifactBrowser Artifacts
+@inject JobWorkspaceResolver Workspaces
 
 <PageTitle>Job @JobId · SIQS</PageTitle>
 
@@ -279,18 +280,18 @@ null;
 
     private void LoadDiskJob()
     {
-        var directory = Path.Combine(Jobs.RunsRoot, JobId);
-        if (!Directory.Exists(directory))
-        {
-            _job = null;
-            _artifacts = Array.Empty<ArtifactInfo>();
-            return;
-        }
-
         try
         {
-            _job = JobStore.LoadSnapshot(directory);
-            _artifacts = Artifacts.List(directory);
+            var workspace = Workspaces.ResolveJob(JobId);
+            if (!Directory.Exists(workspace.Path))
+            {
+                _job = null;
+                _artifacts = Array.Empty<ArtifactInfo>();
+                return;
+            }
+
+            _job = JobStore.LoadSnapshot(workspace.Path);
+            _artifacts = Artifacts.List(JobId);
         }
         catch
         {

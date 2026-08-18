@@ -14,7 +14,9 @@ public sealed record RelationInboxSnapshot(
     long ProcessedChunks,
     long FailedChunks,
     long AcceptedRelations,
-    long RejectedRelations);
+    long RejectedRelations,
+    long RawBacklogBytes,
+    long MaxRawBacklogBytes);
 
 /// <summary>
 /// A disk-backed boundary between HTTP receipt and relation verification. Request threads only copy
@@ -36,7 +38,8 @@ internal sealed class DurableRelationInbox
 
     private readonly string _root;
     private readonly long _maxChunkBytes;
-    private readonly long _maxSpoolBytes;
+    private readonly RelationInboxQuota _quota;
+    private readonly DurableFilePublisher _publisher;
     private readonly Func<IReadOnlyCollection<RawRelationRecord>, (int Accepted, int Rejected)> _ingest;
     private readonly Action<string, bool> _leaseProcessed;
     private readonly Action<Exception> _faulted;
@@ -48,7 +51,6 @@ internal sealed class DurableRelationInbox
     private Task? _worker;
     private bool _accepting = true;
     private int _activeWriters;
-    private long _durableBytes;
     private long _receivedChunks;
     private long _processedChunks;
     private long _failedChunks;
@@ -62,32 +64,49 @@ internal sealed class DurableRelationInbox
         Func<IReadOnlyCollection<RawRelationRecord>, (int Accepted, int Rejected)> ingest,
         Action<string, bool> leaseProcessed,
         Action<Exception> faulted)
+        : this(jobDirectory, maxChunkBytes, maxSpoolBytes, AddMetadataAllowance(maxSpoolBytes),
+            ingest, leaseProcessed, faulted)
+    {
+    }
+
+    public DurableRelationInbox(
+        string jobDirectory,
+        long maxChunkBytes,
+        long maxBacklogBytes,
+        long maxInboxBytes,
+        Func<IReadOnlyCollection<RawRelationRecord>, (int Accepted, int Rejected)> ingest,
+        Action<string, bool> leaseProcessed,
+        Action<Exception> faulted)
     {
         if (maxChunkBytes < 1)
         {
             throw new ArgumentOutOfRangeException(nameof(maxChunkBytes));
         }
 
-        if (maxSpoolBytes < maxChunkBytes)
+        if (maxBacklogBytes < maxChunkBytes)
         {
             throw new ArgumentOutOfRangeException(
-                nameof(maxSpoolBytes), "The spool quota must hold at least one maximum-size chunk.");
+                nameof(maxBacklogBytes), "The backlog quota must hold at least one maximum-size chunk.");
+        }
+
+        if (maxInboxBytes < maxBacklogBytes)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxInboxBytes), "The total inbox quota cannot be smaller than the backlog quota.");
         }
 
         _root = Path.Combine(jobDirectory, ".relation-inbox");
         _maxChunkBytes = maxChunkBytes;
-        _maxSpoolBytes = maxSpoolBytes;
         _ingest = ingest;
         _leaseProcessed = leaseProcessed;
         _faulted = faulted;
         Directory.CreateDirectory(_root);
         RecoverInterruptedChunks();
-        _durableBytes = EnumerateChunkFiles(ChunkReadySuffix)
-            .Concat(EnumerateChunkFiles(ChunkProcessingSuffix))
-            .Concat(EnumerateChunkFiles(ChunkDoneSuffix))
-            .Concat(EnumerateChunkFiles(ChunkFailedSuffix))
-            .Concat(EnumerateChunkFiles(ChunkReceiptSuffix))
+        var totalBytes = Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories)
             .Sum(path => new FileInfo(path).Length);
+        var rawBacklogBytes = EnumerateRawPayloadFiles().Sum(path => new FileInfo(path).Length);
+        _quota = new RelationInboxQuota(maxBacklogBytes, maxInboxBytes, rawBacklogBytes, totalBytes);
+        _publisher = new DurableFilePublisher(_quota);
     }
 
     public void Start()
@@ -110,7 +129,8 @@ internal sealed class DurableRelationInbox
         {
             lock (_gate)
             {
-                return _accepting && Interlocked.Read(ref _durableBytes) <= _maxSpoolBytes - _maxChunkBytes;
+                return _accepting &&
+                       _quota.CanAcceptPayload(_maxChunkBytes);
             }
         }
     }
@@ -176,12 +196,12 @@ internal sealed class DurableRelationInbox
                         throw new InboxLimitException($"A relation chunk cannot exceed {_maxChunkBytes} bytes.");
                     }
 
-                    written += read;
-                    if (Interlocked.Add(ref _durableBytes, read) > _maxSpoolBytes)
+                    if (!_quota.TryReservePayload(read, out var quotaReason))
                     {
-                        throw new InboxLimitException($"The relation inbox quota of {_maxSpoolBytes} bytes is full.");
+                        throw new InboxLimitException(quotaReason!);
                     }
 
+                    written += read;
                     await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
                 }
 
@@ -196,7 +216,7 @@ internal sealed class DurableRelationInbox
             catch (IOException) when (TryFindExistingChunk(
                                           readyPath, processingPath, donePath, failedPath, receiptPath, out var racedBytes))
             {
-                RollbackSpooled(temporaryPath, written);
+                RollbackSpooled(leaseDirectory, temporaryPath, written);
                 return new RelationChunkResponse(true, sequence, racedBytes, true, null);
             }
 
@@ -206,12 +226,12 @@ internal sealed class DurableRelationInbox
         }
         catch (InboxLimitException ex)
         {
-            RollbackSpooled(temporaryPath, written);
+            RollbackSpooled(leaseDirectory, temporaryPath, written);
             return new RelationChunkResponse(false, sequence, 0, false, ex.Message);
         }
         catch
         {
-            RollbackSpooled(temporaryPath, written);
+            RollbackSpooled(leaseDirectory, temporaryPath, written);
             throw;
         }
         finally
@@ -224,14 +244,15 @@ internal sealed class DurableRelationInbox
     /// Cleans up a failed chunk write: deletes the temporary spool file if present and rolls back
     /// this chunk's contribution to the durable-byte quota.
     /// </summary>
-    private void RollbackSpooled(string temporaryPath, long written)
+    private void RollbackSpooled(string leaseDirectory, string temporaryPath, long written)
     {
         if (File.Exists(temporaryPath))
         {
             File.Delete(temporaryPath);
         }
 
-        Interlocked.Add(ref _durableBytes, -written);
+        _quota.ReleasePayload(written);
+        TryDeleteEmptyDirectory(leaseDirectory);
     }
 
     public async Task<LeaseUploadCompleteResponse> CompleteLeaseAsync(
@@ -260,10 +281,18 @@ internal sealed class DurableRelationInbox
                 return new LeaseUploadCompleteResponse(true, null);
             }
 
-            await WriteDurableFileAsync(
-                readyPath,
-                Encoding.UTF8.GetBytes(chunkCount.ToString(System.Globalization.CultureInfo.InvariantCulture)),
-                cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await _publisher.WriteAsync(
+                    readyPath,
+                    Encoding.UTF8.GetBytes(chunkCount.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (InboxLimitException ex)
+            {
+                TryDeleteEmptyDirectory(leaseDirectory);
+                return new LeaseUploadCompleteResponse(false, ex.Message);
+            }
             Signal();
             return new LeaseUploadCompleteResponse(true, null);
         }
@@ -284,16 +313,28 @@ internal sealed class DurableRelationInbox
         await _drained.Task.ConfigureAwait(false);
     }
 
+    public async Task CleanupAsync(bool retain)
+    {
+        await SealAndDrainAsync().ConfigureAwait(false);
+        if (!retain && Directory.Exists(_root))
+        {
+            Directory.Delete(_root, recursive: true);
+            _quota.Reset();
+        }
+    }
+
     public RelationInboxSnapshot Snapshot()
         => new(
-            Interlocked.Read(ref _durableBytes),
-            _maxSpoolBytes,
+            _quota.TotalBytes,
+            _quota.MaxInboxBytes,
             EnumerateChunkFiles(ChunkReadySuffix).Count(),
             Interlocked.Read(ref _receivedChunks),
             Interlocked.Read(ref _processedChunks),
             Interlocked.Read(ref _failedChunks),
             Interlocked.Read(ref _acceptedRelations),
-            Interlocked.Read(ref _rejectedRelations));
+            Interlocked.Read(ref _rejectedRelations),
+            _quota.RawBacklogBytes,
+            _quota.MaxBacklogBytes);
 
     private async Task ProcessLoopAsync()
     {
@@ -416,11 +457,13 @@ internal sealed class DurableRelationInbox
             }
 
             _leaseProcessed(leaseId, success);
-            await WriteDurableFileAsync(
+            await _publisher.WriteAsync(
                 Path.Combine(leaseDirectory, CompleteDoneName),
                 Encoding.UTF8.GetBytes(success ? "accepted" : "failed"),
                 CancellationToken.None).ConfigureAwait(false);
+            var readyBytes = new FileInfo(readyPath).Length;
             File.Delete(readyPath);
+            _quota.ReleaseRetained(readyBytes);
             return true;
         }
 
@@ -447,43 +490,12 @@ internal sealed class DurableRelationInbox
         return relations;
     }
 
-    private async Task WriteDurableFileAsync(string path, byte[] content, CancellationToken cancellationToken)
-    {
-        var temporaryPath = path + $".{Guid.NewGuid():N}.part";
-        var stream = new FileStream(
-            temporaryPath,
-            new FileStreamOptions
-            {
-                Mode = FileMode.CreateNew,
-                Access = FileAccess.Write,
-                Share = FileShare.None,
-                BufferSize = 4096,
-                Options = FileOptions.Asynchronous,
-            });
-        await using (stream.ConfigureAwait(false))
-        {
-            await stream.WriteAsync(content, cancellationToken).ConfigureAwait(false);
-            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-            stream.Flush(flushToDisk: true);
-        }
-
-        try
-        {
-            File.Move(temporaryPath, path);
-        }
-        catch (IOException) when (File.Exists(path))
-        {
-            File.Delete(temporaryPath);
-        }
-    }
-
     private async Task CompactChunkAsync(string payloadPath, string receiptPath, byte[] receipt)
     {
         var payloadBytes = new FileInfo(payloadPath).Length;
-        await WriteDurableFileAsync(receiptPath, receipt, CancellationToken.None).ConfigureAwait(false);
-        var receiptBytes = new FileInfo(receiptPath).Length;
+        await _publisher.WriteAsync(receiptPath, receipt, CancellationToken.None).ConfigureAwait(false);
         File.Delete(payloadPath);
-        Interlocked.Add(ref _durableBytes, receiptBytes - payloadBytes);
+        _quota.ReleasePayload(payloadBytes);
     }
 
     private void RecoverInterruptedChunks()
@@ -526,7 +538,14 @@ internal sealed class DurableRelationInbox
     }
 
     private IEnumerable<string> EnumerateChunkFiles(string suffix)
-        => Directory.EnumerateFiles(_root, "*" + suffix, SearchOption.AllDirectories);
+        => Directory.Exists(_root)
+            ? Directory.EnumerateFiles(_root, "*" + suffix, SearchOption.AllDirectories)
+            : [];
+
+    private IEnumerable<string> EnumerateRawPayloadFiles()
+        => EnumerateChunkFiles(ChunkReadySuffix)
+            .Concat(EnumerateChunkFiles(ChunkProcessingSuffix))
+            .Concat(EnumerateChunkFiles(ChunkDoneSuffix));
 
     private bool HasReadyWork()
         => EnumerateChunkFiles(ChunkReadySuffix).Any() ||
@@ -578,6 +597,26 @@ internal sealed class DurableRelationInbox
         }
     }
 
+    private static long AddMetadataAllowance(long backlogBytes)
+        => backlogBytes > long.MaxValue - 1024 * 1024
+            ? long.MaxValue
+            : backlogBytes + 1024 * 1024;
+
+    private static void TryDeleteEmptyDirectory(string directory)
+    {
+        try
+        {
+            if (Directory.Exists(directory) && !Directory.EnumerateFileSystemEntries(directory).Any())
+            {
+                Directory.Delete(directory);
+            }
+        }
+        catch (IOException)
+        {
+            // Another concurrent writer populated or removed it.
+        }
+    }
+
     private static bool TryFindExistingChunk(
         string readyPath,
         string processingPath,
@@ -605,5 +644,4 @@ internal sealed class DurableRelationInbox
         return false;
     }
 
-    private sealed class InboxLimitException(string message) : Exception(message);
 }
