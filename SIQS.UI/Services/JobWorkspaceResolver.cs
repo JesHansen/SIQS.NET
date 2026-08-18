@@ -61,6 +61,14 @@ public sealed class JobWorkspaceResolver
             throw new ArgumentException("The artifact name is required.", nameof(name));
         }
 
+        // Artifact routes identify files directly beneath a job workspace. Validate both path
+        // separator styles explicitly so a Windows path cannot become an innocuous-looking file
+        // name on Unix (or vice versa).
+        if (name is "." or ".." || name.IndexOfAny(['/', '\\']) >= 0 || name.Contains(':'))
+        {
+            throw new ArgumentException("The artifact name must be a simple file name.", nameof(name));
+        }
+
         var workspacePrefix = Path.EndsInDirectorySeparator(workspace.Path)
             ? workspace.Path
             : workspace.Path + Path.DirectorySeparatorChar;
