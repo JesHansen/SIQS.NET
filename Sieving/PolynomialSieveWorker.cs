@@ -813,7 +813,7 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
     // neutral to markedly slower (specialising both bands pushed C87 scatter from ~1.4 to ~1.8
     // CPU-seconds). The while loops here already exit after one or two iterations for those primes,
     // so explicit band discovery only adds control flow without removing any work.
-    private static void ScatterBandPrimeHits(
+    internal static void ScatterBandPrimeHits(
         FactorBaseData fb, int bucketStart, int fullBlockLength, int blockSize,
         byte[] byteLogP, int[] pos1, int[] pos2, LargePrimeBuckets buckets)
     {
@@ -828,7 +828,9 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
             var logp = byteLogP[i];
 
             var j1 = pos1[i];
-            while (j1 >= 0 && j1 < fullBlockLength)
+            // The interval length is positive. One unsigned comparison rejects both negative
+            // root sentinels and positions past the interval (including overflowed advances).
+            while ((uint)j1 < (uint)fullBlockLength)
             {
                 int bucket, offset;
                 if (blockShift >= 0) { bucket = j1 >> blockShift; offset = j1 & blockMask; }
@@ -838,7 +840,7 @@ internal sealed class PolynomialSieveWorker(int sieveBufferLength)
             }
 
             var j2 = pos2[i];
-            while (j2 >= 0 && j2 < fullBlockLength)
+            while ((uint)j2 < (uint)fullBlockLength)
             {
                 int bucket, offset;
                 if (blockShift >= 0) { bucket = j2 >> blockShift; offset = j2 & blockMask; }

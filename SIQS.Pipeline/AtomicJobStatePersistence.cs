@@ -22,10 +22,22 @@ internal sealed class AtomicJobStatePersistence
     private static readonly UTF8Encoding Utf8 = new(encoderShouldEmitUTF8Identifier: false);
     private static readonly JsonSerializerOptions Options = CreateOptions();
     private readonly Action<JobStateWriteStage>? _onStage;
+    private readonly Action<string, string, bool> _moveFile;
+    private readonly Action<int> _delay;
 
     public AtomicJobStatePersistence(Action<JobStateWriteStage>? onStage = null)
+        : this(onStage, File.Move, Thread.Sleep)
+    {
+    }
+
+    internal AtomicJobStatePersistence(
+        Action<JobStateWriteStage>? onStage,
+        Action<string, string, bool> moveFile,
+        Action<int> delay)
     {
         _onStage = onStage;
+        _moveFile = moveFile;
+        _delay = delay;
     }
 
     public void Write(string jobDirectory, JobState state)
@@ -51,7 +63,7 @@ internal sealed class AtomicJobStatePersistence
         _onStage?.Invoke(JobStateWriteStage.TemporaryFileFlushed);
         PreserveLastKnownGood(jobDirectory, primaryPath);
         _onStage?.Invoke(JobStateWriteStage.BeforePrimaryReplace);
-        File.Move(temporaryPath, primaryPath, overwrite: true);
+        MoveWithRetry(temporaryPath, primaryPath);
         _onStage?.Invoke(JobStateWriteStage.PrimaryReplaced);
         CleanupTemporaryFiles(jobDirectory);
     }
@@ -108,7 +120,7 @@ internal sealed class AtomicJobStatePersistence
         return options;
     }
 
-    private static void PreserveLastKnownGood(string jobDirectory, string primaryPath)
+    private void PreserveLastKnownGood(string jobDirectory, string primaryPath)
     {
         if (!TryLoad(primaryPath, out var current, out _))
         {
@@ -117,15 +129,19 @@ internal sealed class AtomicJobStatePersistence
 
         var backupTemporaryPath = TemporaryPath(jobDirectory, BackupFileName);
         WriteFlushed(backupTemporaryPath, Utf8.GetBytes(JsonSerializer.Serialize(current, Options)));
-        File.Move(backupTemporaryPath, Path.Combine(jobDirectory, BackupFileName), overwrite: true);
+        MoveWithRetry(backupTemporaryPath, Path.Combine(jobDirectory, BackupFileName));
     }
 
-    private static void RestorePrimary(string jobDirectory, JobState state)
+    private void RestorePrimary(string jobDirectory, JobState state)
     {
         var temporaryPath = TemporaryPath(jobDirectory, JobStore.FileName);
         WriteFlushed(temporaryPath, Utf8.GetBytes(JsonSerializer.Serialize(state, Options)));
-        File.Move(temporaryPath, Path.Combine(jobDirectory, JobStore.FileName), overwrite: true);
+        MoveWithRetry(temporaryPath, Path.Combine(jobDirectory, JobStore.FileName));
     }
+
+    private void MoveWithRetry(string sourcePath, string destinationPath)
+        => ArtifactFileIO.MoveWithRetry(
+            sourcePath, destinationPath, overwrite: true, _moveFile, _delay);
 
     private static void WriteFlushed(string path, ReadOnlySpan<byte> bytes)
     {

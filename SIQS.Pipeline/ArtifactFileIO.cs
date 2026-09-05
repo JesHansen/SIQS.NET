@@ -4,7 +4,7 @@ namespace SIQS.Pipeline;
 
 internal static class ArtifactFileIO
 {
-    private const int MaxReadAttempts = 8;
+    private const int MaxAttempts = 8;
 
     public static string ReadAllText(string path)
     {
@@ -21,7 +21,7 @@ internal static class ArtifactFileIO
                 using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
                 return reader.ReadToEnd();
             }
-            catch (Exception ex) when (IsRetryableReadFailure(ex) && attempt < MaxReadAttempts)
+            catch (Exception ex) when (IsRetryableFileFailure(ex) && attempt < MaxAttempts)
             {
                 Thread.Sleep(delayMs);
                 delayMs = Math.Min(delayMs * 2, 250);
@@ -29,6 +29,29 @@ internal static class ArtifactFileIO
         }
     }
 
-    private static bool IsRetryableReadFailure(Exception ex)
+    internal static void MoveWithRetry(
+        string sourcePath,
+        string destinationPath,
+        bool overwrite,
+        Action<string, string, bool> moveFile,
+        Action<int> delay)
+    {
+        var delayMs = 10;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                moveFile(sourcePath, destinationPath, overwrite);
+                return;
+            }
+            catch (Exception ex) when (IsRetryableFileFailure(ex) && attempt < MaxAttempts)
+            {
+                delay(delayMs);
+                delayMs = Math.Min(delayMs * 2, 250);
+            }
+        }
+    }
+
+    private static bool IsRetryableFileFailure(Exception ex)
         => ex is IOException or UnauthorizedAccessException;
 }

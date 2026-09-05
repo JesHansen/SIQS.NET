@@ -88,6 +88,87 @@ public sealed class AtomicJobStatePersistenceTests : IDisposable
         Assert.True(File.Exists(Path.Combine(_directory, AtomicJobStatePersistence.BackupFileName)));
     }
 
+    [Fact]
+    public void Transient_primary_publish_failures_are_retried()
+    {
+        Directory.CreateDirectory(_directory);
+        var attempts = 0;
+        var delays = new List<int>();
+        var persistence = PersistenceWithMove((source, destination, overwrite) =>
+        {
+            attempts++;
+            if (attempts <= 2)
+            {
+                throw new UnauthorizedAccessException("Simulated transient destination lock.");
+            }
+
+            File.Move(source, destination, overwrite);
+        }, delays);
+
+        persistence.Write(_directory, State(JobStatus.Created));
+
+        Assert.Equal(3, attempts);
+        Assert.Equal([10, 20], delays);
+        Assert.Equal(JobStatus.Created, new AtomicJobStatePersistence().Load(_directory).Status);
+    }
+
+    [Fact]
+    public void Transient_backup_publish_failures_are_retried()
+    {
+        Directory.CreateDirectory(_directory);
+        new AtomicJobStatePersistence().Write(_directory, State(JobStatus.Created));
+        var backupAttempts = 0;
+        var delays = new List<int>();
+        var persistence = PersistenceWithMove((source, destination, overwrite) =>
+        {
+            if (Path.GetFileName(destination) == AtomicJobStatePersistence.BackupFileName
+                && ++backupAttempts <= 2)
+            {
+                throw new IOException("Simulated transient destination lock.");
+            }
+
+            File.Move(source, destination, overwrite);
+        }, delays);
+
+        persistence.Write(_directory, State(JobStatus.Running));
+
+        Assert.Equal(3, backupAttempts);
+        Assert.Equal([10, 20], delays);
+        Assert.Equal(JobStatus.Running, persistence.Load(_directory).Status);
+    }
+
+    [Fact]
+    public void Transient_restore_failures_are_retried()
+    {
+        Directory.CreateDirectory(_directory);
+        var initial = new AtomicJobStatePersistence();
+        initial.Write(_directory, State(JobStatus.Created));
+        initial.Write(_directory, State(JobStatus.Running));
+        File.WriteAllText(Path.Combine(_directory, JobStore.FileName), "{ partial");
+        var restoreAttempts = 0;
+        var delays = new List<int>();
+        var persistence = PersistenceWithMove((source, destination, overwrite) =>
+        {
+            if (Path.GetFileName(destination) == JobStore.FileName && ++restoreAttempts <= 2)
+            {
+                throw new UnauthorizedAccessException("Simulated transient destination lock.");
+            }
+
+            File.Move(source, destination, overwrite);
+        }, delays);
+
+        var recovered = persistence.Load(_directory);
+
+        Assert.Equal(3, restoreAttempts);
+        Assert.Equal([10, 20], delays);
+        Assert.Equal(JobStatus.Created, recovered.Status);
+    }
+
+    private static AtomicJobStatePersistence PersistenceWithMove(
+        Action<string, string, bool> moveFile,
+        List<int> delays)
+        => new(onStage: null, moveFile, delays.Add);
+
     private static JobState State(JobStatus status) => new()
     {
         JobId = "J20260818-123456-0001",

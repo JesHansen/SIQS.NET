@@ -65,9 +65,7 @@ internal static class SieveRunCoordinator
         // logScale × log(Q_max) ≈ 1600–2400.  Scale everything by byteRescale = 200 / that total
         // so that the maximum meaningful sieve value fits in a byte, and the fill uses byte arithmetic
         // (halving memory traffic relative to ushort).
-        var qMaxEstimate = (double)m * Math.Sqrt(2.0 * (double)fb.TargetN) / 2.0;
-        var effectiveMaxLogCredit = fb.LogScale * Math.Log(Math.Max(1.0, qMaxEstimate));
-        var byteRescale = effectiveMaxLogCredit > 0.0 ? 200.0 / effectiveMaxLogCredit : 1.0;
+        var byteRescale = ComputeByteRescale(fb, m);
         var byteLogP = new byte[fb.Count];
         for (var i = 0; i < fb.Count; i++)
             byteLogP[i] = (byte)Math.Max(1, (int)Math.Round(fb.LogP[i] * byteRescale));
@@ -344,6 +342,13 @@ internal static class SieveRunCoordinator
     /// </summary>
     internal static OrderablePartitioner<T> CreateWorkPartitioner<T>(IEnumerable<T> work)
         => Partitioner.Create(work, EnumerablePartitionerOptions.NoBuffering);
+
+    internal static double ComputeByteRescale(FactorBaseData factorBase, long halfInterval)
+    {
+        var qMaxEstimate = (double)halfInterval * Math.Sqrt(2.0 * (double)factorBase.ScaledN) / 2.0;
+        var effectiveMaxLogCredit = factorBase.LogScale * Math.Log(Math.Max(1.0, qMaxEstimate));
+        return effectiveMaxLogCredit > 0.0 ? 200.0 / effectiveMaxLogCredit : 1.0;
+    }
 
     /// <summary>Stops sieving once the raw-relation trial target or the usable-relation target is met.</summary>
     private static bool StopReached(
