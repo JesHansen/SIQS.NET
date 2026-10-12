@@ -88,7 +88,12 @@ public sealed class ArtifactInvariantResumeTests : IDisposable
     }
 
     private static int ResumePoint(Run run)
-        => new ResumePlanner().FindResumePoint(run.Directory, run.State, run.Request);
+    {
+        var plan = new ResumePlanner().FindResumePoint(run.Directory, run.State, run.Request);
+        Assert.Equal(ResumeReason.InvalidArtifacts, plan.Reason);
+        Assert.NotEmpty(plan.Issues);
+        return plan.PhaseIndex;
+    }
 
     public void Dispose()
     {

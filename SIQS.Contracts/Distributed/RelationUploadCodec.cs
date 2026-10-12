@@ -23,7 +23,26 @@ public static class RelationUploadCodec
         relation.LargePrimes.Select(Dec).ToArray());
 
     public static RawRelationRecord FromUploadRecord(RelationUploadRecord relation)
-        => new(
+    {
+        if (string.IsNullOrWhiteSpace(relation.RelationId) ||
+            string.IsNullOrWhiteSpace(relation.PolyId) ||
+            relation.A is null || relation.B is null || relation.C is null || relation.T is null ||
+            relation.FactorExponents is null || relation.ParityColumns is null || relation.LargePrimes is null)
+        {
+            throw new FormatException("A relation upload is missing a required member.");
+        }
+
+        if (!Enum.IsDefined(relation.Kind))
+        {
+            throw new FormatException($"Unknown relation kind '{relation.Kind}'.");
+        }
+
+        if (relation.LargePrimes.Any(value => value is null))
+        {
+            throw new FormatException("A relation upload contains a null large-prime value.");
+        }
+
+        return new(
             relation.RelationId,
             relation.Kind,
             relation.PolyId,
@@ -39,6 +58,7 @@ public static class RelationUploadCodec
         {
             LargePrimes = relation.LargePrimes.Select(ParseBigInteger).ToArray(),
         };
+    }
 
     private static string Dec(BigInteger value) => value.ToString(CultureInfo.InvariantCulture);
 

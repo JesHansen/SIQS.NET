@@ -71,6 +71,37 @@ public class BlockLanczosTests
         }
     }
 
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(0, 4)]
+    [InlineData(BlockLanczosOptions.DefaultPostLanczosRows, 1)]
+    public void Nonzero_matrix_with_zero_gram_operator_recovers_verified_dependencies(
+        int postLanczosRows, int parallelism)
+    {
+        // Every pair of rows (including each row with itself) shares an even number of columns, so
+        // R * R^T = 0 over GF(2): the Lanczos operator is identically zero although R is not.
+        int[] generators = [0b0001111, 0b0110011, 0b1010101];
+        var words = Enumerable.Range(1, 7)
+            .Select(mask => Enumerable.Range(0, generators.Length)
+                .Where(bit => (mask & (1 << bit)) != 0)
+                .Aggregate(0, (word, bit) => word ^ generators[bit]))
+            .ToList();
+        words.Add(words[0]);
+        var rows = words
+            .Select(word => RelationRow.FromColumns(Enumerable.Range(0, 7).Where(bit => (word & (1 << bit)) != 0)))
+            .ToArray();
+        Assert.All(words, left => Assert.All(words, right =>
+            Assert.Equal(0, System.Numerics.BitOperations.PopCount((uint)(left & right)) & 1)));
+
+        var result = BlockLanczos.Solve(
+            rows, 7, options: new BlockLanczosOptions(postLanczosRows, 0, parallelism));
+
+        AssertAllDependenciesXorToZero(result, rows);
+        Assert.All(result.Dependencies, dependency => Assert.NotEmpty(dependency.RowIds));
+        Assert.Equal(1, result.LanczosRuns);
+        Assert.Equal("breakdown-recovered", result.StopReason);
+    }
+
     [Fact]
     public void Solves_three_row_cycle()
     {

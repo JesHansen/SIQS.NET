@@ -57,6 +57,7 @@ public sealed class RawRelationBatchFileSink : IRawRelationSink
     private readonly List<RawRelationRecord> _fullBuffer;
     private readonly List<RawRelationRecord> _partialBuffer;
     private readonly List<string> _artifacts = [];
+    private readonly HashSet<string> _filesAwaitingDurableFlush = new(StringComparer.OrdinalIgnoreCase);
     private int _fullBatch;
     private int _partialBatch;
     private int _fullBatchCount;
@@ -129,6 +130,13 @@ public sealed class RawRelationBatchFileSink : IRawRelationSink
         {
             FlushFulls(durable: true);
             FlushPartials(durable: true);
+            foreach (var path in _filesAwaitingDurableFlush)
+            {
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.Read);
+                stream.Flush(flushToDisk: true);
+            }
+
+            _filesAwaitingDurableFlush.Clear();
         }
     }
 
@@ -188,6 +196,11 @@ public sealed class RawRelationBatchFileSink : IRawRelationSink
         if (durable)
         {
             stream.Flush(flushToDisk: true);
+            _filesAwaitingDurableFlush.Remove(path);
+        }
+        else
+        {
+            _filesAwaitingDurableFlush.Add(path);
         }
 
         batchCount += buffer.Count;

@@ -213,6 +213,29 @@ public sealed class LeaseLedger
         }
     }
 
+    /// <summary>Reclaims restart-surviving ingest protection that has no durable inbox marker.</summary>
+    public void ReconcilePendingIngest(Func<string, bool> hasDurableCompletionMarker)
+    {
+        ArgumentNullException.ThrowIfNull(hasDurableCompletionMarker);
+        lock (_gate)
+        {
+            var changed = false;
+            foreach (var lease in _outstanding.Values
+                         .Where(lease => lease.PendingIngest && !hasDurableCompletionMarker(lease.LeaseId))
+                         .ToArray())
+            {
+                _outstanding.Remove(lease.LeaseId);
+                _reclaimed.Enqueue((lease.Start, lease.End));
+                changed = true;
+            }
+
+            if (changed)
+            {
+                Persist();
+            }
+        }
+    }
+
     /// <summary>
     /// Extends an outstanding lease while its client is actively uploading. Returns false when the
     /// lease has already expired or is unknown; verified relations may still be ingested, but the

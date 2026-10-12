@@ -15,10 +15,17 @@ internal enum JobStateWriteStage
 /// <summary>
 /// Persists job state through a flushed same-directory temporary file and an atomic rename. A
 /// last-known-good backup is retained, while recovery can promote that backup or a complete orphan.
+/// Reads never delete files; writers remove only temporary files old enough to be abandoned.
 /// </summary>
 internal sealed class AtomicJobStatePersistence
 {
     internal const string BackupFileName = JobStore.FileName + ".bak";
+
+    /// <summary>
+    /// A live publication moves its temporary file within the bounded retry budget (well under a
+    /// second), so a temporary file untouched for this long cannot belong to an active writer.
+    /// </summary>
+    internal static readonly TimeSpan OrphanAge = TimeSpan.FromMinutes(10);
     private static readonly UTF8Encoding Utf8 = new(encoderShouldEmitUTF8Identifier: false);
     private static readonly JsonSerializerOptions Options = CreateOptions();
     private readonly Action<JobStateWriteStage>? _onStage;
@@ -73,7 +80,6 @@ internal sealed class AtomicJobStatePersistence
         var primaryPath = Path.Combine(jobDirectory, JobStore.FileName);
         if (TryLoad(primaryPath, out var primary, out var primaryError))
         {
-            CleanupTemporaryFiles(jobDirectory);
             return primary!;
         }
 
@@ -81,7 +87,6 @@ internal sealed class AtomicJobStatePersistence
         if (TryLoad(backupPath, out var backup, out _))
         {
             RestorePrimary(jobDirectory, backup!);
-            CleanupTemporaryFiles(jobDirectory);
             return backup!;
         }
 
@@ -94,7 +99,6 @@ internal sealed class AtomicJobStatePersistence
             }
 
             RestorePrimary(jobDirectory, temporary!);
-            CleanupTemporaryFiles(jobDirectory);
             return temporary!;
         }
 
@@ -189,7 +193,9 @@ internal sealed class AtomicJobStatePersistence
 
     private static void CleanupTemporaryFiles(string directory)
     {
-        foreach (var path in EnumerateTemporaryFiles(directory))
+        var abandonedBefore = DateTime.UtcNow - OrphanAge;
+        foreach (var path in EnumerateTemporaryFiles(directory)
+                     .Where(path => File.GetLastWriteTimeUtc(path) < abandonedBefore))
         {
             try
             {

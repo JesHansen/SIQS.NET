@@ -27,7 +27,8 @@ public static class SievingEngine
             factorBase.Metadata.Multiplier,
             factorBase.Metadata.ScaledN,
             factorBase.Metadata.Bound,
-            parameters.LargePrimeBound);
+            parameters.LargePrimeBound,
+            parameters.EnableTwoLargePrimes ? parameters.LargePrime2Bound : null);
 
         return new SievingResult(metadata, sink.FullRelations, sink.Partials, counters);
     }

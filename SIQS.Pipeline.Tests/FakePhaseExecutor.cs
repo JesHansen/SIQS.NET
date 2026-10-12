@@ -22,6 +22,9 @@ internal sealed class FakePhaseExecutor : IPhaseExecutor
     public bool SquareRootFindsFactor { get; init; } = true;
     public SiqsPhase? FailAt { get; init; }
     public SiqsPhase? CancelAt { get; set; }
+    public int SievingProgressDiscards { get; private set; }
+
+    public void DiscardSievingProgress(string jobDirectory) => SievingProgressDiscards++;
 
     public Task<PhaseResult> RunFactorBaseAsync(PhaseContext c)
     {

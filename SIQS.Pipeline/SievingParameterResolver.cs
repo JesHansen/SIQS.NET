@@ -34,12 +34,8 @@ public static class SievingParameterResolver
                 ?? Math.Min(
                     FactorizationRequestLimits.MaxPolynomialCount,
                     SievingParameters.AvailablePolynomialSupply(parameters.APrimeWindowSize, parameters.APrimeCount)),
-            // Honor an explicit CLI/persisted token (the request validator has already rejected any
-            // unrecognized value); otherwise auto-select from the effective LP2 bound so an overridden
-            // bound above 2³² still gets the rho fallback it needs for > 64-bit residuals.
-            CofactorSplitter = sieving.CofactorSplitter is { } token && CofactorSplitterKinds.TryParse(token, out var kind)
-                ? kind
-                : CofactorSplitterKinds.SelectFor(parameters.LargePrime2Bound),
+            CofactorSplitter = CofactorSplitterKinds.Resolve(
+                sieving.CofactorSplitter, defaults.CofactorSplitter, parameters.LargePrime2Bound),
             LargePrime2ThresholdBound = sieving.LargePrime2ThresholdBound is null
                 ? Math.Min(parameters.LargePrime2ThresholdBound, parameters.LargePrime2Bound)
                 : parameters.LargePrime2ThresholdBound,

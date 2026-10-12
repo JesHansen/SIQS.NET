@@ -38,8 +38,8 @@ internal static class DistributedEndpoints
         group.MapGet("/job", (OverlordService overlord)
             => overlord.TryGetJob() is { } descriptor ? Results.Ok(descriptor) : Results.NoContent());
 
-        group.MapPost("/lease", (int? parallelism, OverlordService overlord)
-            => overlord.TryLease(parallelism) is { } lease ? Results.Ok(lease) : Results.NoContent());
+        group.MapPost("/lease", (int? parallelism, string jobId, string paramHash, OverlordService overlord)
+            => overlord.TryLease(parallelism, jobId, paramHash) is { } lease ? Results.Ok(lease) : Results.NoContent());
 
         group.MapPost("/relations/{jobId}/{leaseId}/{sequence:long}", async Task<IResult> (
                 string jobId,

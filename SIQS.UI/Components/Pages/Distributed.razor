@@ -84,7 +84,7 @@
                             </div>
 
                             <div class="distributed-phases" aria-label="Distributed job phase">
-                                @foreach (var phase in Enum.GetValues<OverlordPhase>().Where(phase => phase != OverlordPhase.Faulted))
+            @foreach (var phase in Enum.GetValues<OverlordPhase>().Where(phase => phase is not (OverlordPhase.Canceled or OverlordPhase.Faulted)))
                                 {
                                     <span class="@PhaseClass(phase, job.Phase)">@PhaseText(phase)</span>
                                 }
@@ -330,8 +330,9 @@
         OverlordPhase.Sieving => "sieving",
         OverlordPhase.Draining => "draining uploads",
         OverlordPhase.Finishing => "finishing (filtering / linalg / sqrt)",
-        OverlordPhase.Completed => "completed",
-        OverlordPhase.Faulted => "faulted",
+            OverlordPhase.Completed => "completed",
+            OverlordPhase.Canceled => "canceled",
+            OverlordPhase.Faulted => "faulted",
         _ => phase.ToString(),
     };
 

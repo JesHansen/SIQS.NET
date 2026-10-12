@@ -79,7 +79,7 @@ public static class PolynomialGenerator
             .OrderBy(i => fb.Columns[i])
             .ToArray();
 
-        var candidates = ShouldEnumerate(window.Length, s, parameters)
+        var candidates = ShouldEnumerate(window.Length, s)
             ? EnumerateAllCandidates(fb, window, s, targetLog)
             : SampleCandidates(fb, eligible, window, s, targetLog, parameters);
 
@@ -92,29 +92,27 @@ public static class PolynomialGenerator
 
     /// <summary>
     /// Chooses between enumerating the whole combination space and deterministic sampling.
-    /// Enumeration wins for small spaces, and also whenever the number of candidates we want to
-    /// sample meets or exceeds what sampling can actually reach: the sampler draws <c>s-1</c> window
-    /// positions and derives the final prime deterministically, so it can produce at most
-    /// <c>C(window, s-1)</c> distinct A-sets. Asking for more makes rejection sampling thrash on
-    /// duplicates until it hits its attempt cap — the source of the C46–C52 wall-clock cliff — while
-    /// enumeration of the (only modestly larger) full space is both faster and higher quality.
+    /// Enumeration is used only when the space is within <see cref="ExhaustiveCombinationLimit"/>.
+    /// Larger spaces always use sampling, bounded by <see cref="SampledCandidateTarget"/>.
     /// </summary>
-    private static bool ShouldEnumerate(int windowLength, int s, SievingParameters parameters)
-    {
-        if (CombinationSpace(windowLength, s) <= ExhaustiveCombinationLimit)
-        {
-            return true;
-        }
+    internal static bool ShouldEnumerate(int windowLength, int s)
+        => CombinationSpace(windowLength, s) <= ExhaustiveCombinationLimit;
 
-        var reachableBySampling = CombinationSpace(windowLength, s - 1);
-        return SampledCandidateTarget(parameters, s) >= reachableBySampling;
-    }
-
-    /// <summary>Number of distinct A-sets the sampling path aims to produce.</summary>
-    private static long SampledCandidateTarget(SievingParameters parameters, int s)
+    /// <summary>
+    /// Number of distinct A-sets the sampling path aims to produce: the polynomial request, capped at
+    /// <see cref="MaxSampledCandidates"/> and at half of the space the sampler can reach. It draws
+    /// <c>s-1</c> window positions and derives the last prime, so at most <c>C(window, s-1)</c>
+    /// distinct A-sets exist, fewer when draws converge on the same final prime. Collecting all of
+    /// them is a coupon-collector tail that ran the sampler into its attempt cap (measured: window 707,
+    /// s=3 took 6 s and allocated 7.3 GB); half the space is reached in well under one attempt per
+    /// reachable set (0.17 s, 105 MB).
+    /// </summary>
+    internal static long SampledCandidateTarget(SievingParameters parameters, int s, int windowLength)
     {
         var familySize = 1L << Math.Max(0, s - 1);
-        return Math.Clamp(parameters.PolynomialCount / familySize, 1, MaxSampledCandidates);
+        return Math.Min(
+            Math.Clamp(parameters.PolynomialCount / familySize, 1, MaxSampledCandidates),
+            Math.Max(1, CombinationSpace(windowLength, Math.Max(0, s - 1)) / 2));
     }
 
     private static List<(double Score, int[] Positions)> EnumerateAllCandidates(
@@ -144,7 +142,7 @@ public static class PolynomialGenerator
     private static List<(double Score, int[] Positions)> SampleCandidates(
         FactorBaseData fb, List<int> eligible, int[] window, int s, double targetLog, SievingParameters parameters)
     {
-        var targetCount = (int)SampledCandidateTarget(parameters, s);
+        var targetCount = (int)SampledCandidateTarget(parameters, s, window.Length);
 
         var windowLogs = new double[window.Length];
         for (var i = 0; i < window.Length; i++)
@@ -273,7 +271,7 @@ public static class PolynomialGenerator
         return best;
     }
 
-    private static long CombinationSpace(int windowSize, int choose)
+    internal static long CombinationSpace(int windowSize, int choose)
     {
         if (choose < 0 || windowSize < choose)
         {

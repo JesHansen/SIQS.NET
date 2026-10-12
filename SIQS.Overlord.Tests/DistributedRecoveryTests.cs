@@ -34,6 +34,45 @@ public sealed class DistributedRecoveryTests : IDisposable
     }
 
     [Fact]
+    public void Pending_ingest_without_a_durable_marker_is_reclaimed_on_reconciliation()
+    {
+        Directory.CreateDirectory(_root);
+        var issued = DateTimeOffset.UtcNow;
+        var ledger = new LeaseLedger(4, 2, _root);
+        var pending = ledger.TryLease(TimeSpan.FromMinutes(5), issued)!;
+        Assert.True(ledger.ProtectPendingIngest(pending.LeaseId, issued));
+
+        var recovered = new LeaseLedger(4, 2, _root);
+        recovered.ReconcilePendingIngest(_ => false);
+        var reassigned = recovered.TryLease(TimeSpan.FromMinutes(5), issued.AddDays(1));
+
+        Assert.NotNull(reassigned);
+        Assert.Equal((pending.Start, pending.End), (reassigned.Start, reassigned.End));
+    }
+
+    [Fact]
+    public void Discarding_sieve_output_forgets_completed_lease_ranges_but_keeps_the_descriptor()
+    {
+        Directory.CreateDirectory(_root);
+        var issued = DateTimeOffset.UtcNow;
+        var ledger = new LeaseLedger(10, 2, _root);
+        Assert.True(ledger.Complete(ledger.TryLease(TimeSpan.FromMinutes(5), issued)!.LeaseId));
+        Directory.CreateDirectory(Path.Combine(_root, DurableRelationInbox.DirectoryName, "lease"));
+        var descriptor = Path.Combine(_root, DistributedJobDescriptorStore.FileName);
+        File.WriteAllText(descriptor, "{}");
+        IPhaseExecutor executor = new DistributedSievingPhaseExecutor(
+            new RealPhaseExecutor(), new OverlordJob("D20261012-000000-0000", "91", _root),
+            2, TimeSpan.Zero, 1024, 1024, 1024);
+
+        executor.DiscardSievingProgress(_root);
+
+        Assert.False(Directory.Exists(Path.Combine(_root, LeaseJournal.DirectoryName)));
+        Assert.False(Directory.Exists(Path.Combine(_root, DurableRelationInbox.DirectoryName)));
+        Assert.True(File.Exists(descriptor));
+        Assert.Equal(0, new LeaseLedger(10, 2, _root).Snapshot(issued).Completed);
+    }
+
+    [Fact]
     public async Task Interrupted_job_is_operator_visible_and_recovers_same_identity_and_ranges()
     {
         var options = new OverlordOptions

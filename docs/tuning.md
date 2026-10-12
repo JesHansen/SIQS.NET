@@ -56,7 +56,7 @@ availability limits, not recommended tuning values:
 | --- | --- | --- |
 | `--n <number>` | — | The number to factor, as an alternative to the positional argument. With neither, `qs` reads the number from stdin. |
 | `--run-dir <path>` | `runs/<jobId>` | Where run artifacts are written. |
-| `--resume <run-dir>` | — | Resume a canceled run from its saved artifacts. Cannot be combined with `--run-dir`. Passing tuning options alongside it overrides the stored parameters for the remaining work. |
+| `--resume <run-dir>` | — | Resume a canceled run from its saved artifacts, always with the parameters stored in its `job.json`. Cannot be combined with `--run-dir`. Stored parameters are immutable: an option passed alongside `--resume` is only checked against the job, so re-supplying an explicitly stored value is accepted, while a different value, or any value for a parameter stored as `auto`, is rejected as a conflict. Start a new run to change parameters. |
 | `--trial-sieve-percent <p>` | — | Stop sieving after `p`% of the relation target and report throughput instead of factoring. For timing runs. |
 | `--quiet` | off | Print only the factor product, for piping into another tool. |
 | `--debug` | off | Print the full per-phase counter dump instead of the summary view. |
@@ -86,7 +86,7 @@ availability limits, not recommended tuning values:
 | `--two-large-primes <bool>` | off below C110, on at C110+ | Collect partial relations with two large primes. These are far more common than single-large-prime partials and produce many more filtering cycles, but each one costs a cofactor split. |
 | `--large-prime2-bound <b>` | 1.5× the factor-base bound | The largest cofactor accepted as a two-large-prime pair. Wider bounds add graph cycles but grow the partial-relation graph filtering has to walk. |
 | `--large-prime2-threshold-bound <b>` | Same as `--large-prime2-bound` | The bound used to grant scan log credit in two-large-prime mode. It does not itself limit which relations are accepted. Clamped down to `--large-prime2-bound` if set higher. |
-| `--cofactor-splitter <kind>` | `micro-ecm-stage2` at C110+, otherwise auto-selected from the large-prime bound | Which algorithm splits composite cofactors: `squfof`, `squfof-rho`, `micro-ecm-squfof`, or `micro-ecm-stage2`. All four accept the same relations; they differ only in speed on a given residual size. |
+| `--cofactor-splitter <kind>` | `micro-ecm-stage2` at C110+, otherwise `squfof`; an automatic `squfof` widens to `squfof-rho` when the LP2 bound exceeds 2³² | Which algorithm splits composite cofactors: `squfof`, `squfof-rho`, `micro-ecm-squfof`, or `micro-ecm-stage2`. A supplied value is always used; an unknown value is rejected. While every residual fits in 64 bits (LP2 bound ≤ 2³²) all four accept the same relations and differ only in speed; wider residuals need the rho fallback in `squfof-rho` or `micro-ecm-stage2`. |
 
 ### Sieve-only options
 
@@ -105,7 +105,6 @@ Filtering options are accepted by `qs-filter`; the pipeline uses the defaults.
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `--max-partials-per-prime <n>` | unbounded | Cap on how many partial relations are kept per large prime, bounding the size of the cycle search. |
 | `--max-cycle-length <n>` | unbounded | Cap on the length of a partial-relation cycle that filtering will combine into a full relation. |
 | `--enable-two-merge <bool>` | `true` | Merge columns of weight two, which shrinks the matrix at the cost of denser rows. |
 | `--two-merge-slack <n>` | engine default | How much row-weight growth a two-merge may cause before it is rejected. |

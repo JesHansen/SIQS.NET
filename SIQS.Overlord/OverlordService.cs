@@ -135,7 +135,7 @@ public sealed class OverlordService : IAsyncDisposable
         get { lock (_gate) { return _job; } }
     }
 
-    public bool IsBusy => Current is { Phase: not (OverlordPhase.Completed or OverlordPhase.Faulted) };
+    public bool IsBusy => Current is { Phase: not (OverlordPhase.Completed or OverlordPhase.Canceled or OverlordPhase.Faulted) };
 
     public OverlordJobSnapshot? Snapshot() => Current?.Snapshot();
 
@@ -180,7 +180,7 @@ public sealed class OverlordService : IAsyncDisposable
                     "The application is shutting down and no longer accepts distributed jobs.");
             }
 
-            if (_job is { Phase: not (OverlordPhase.Completed or OverlordPhase.Faulted) })
+            if (_job is { Phase: not (OverlordPhase.Completed or OverlordPhase.Canceled or OverlordPhase.Faulted) })
             {
                 throw new InvalidOperationException("A distributed job is already active.");
             }
@@ -232,7 +232,7 @@ public sealed class OverlordService : IAsyncDisposable
                     "The application is shutting down and no longer accepts distributed jobs.");
             }
 
-            if (_job is { Phase: not (OverlordPhase.Completed or OverlordPhase.Faulted) })
+            if (_job is { Phase: not (OverlordPhase.Completed or OverlordPhase.Canceled or OverlordPhase.Faulted) })
             {
                 throw new InvalidOperationException("A distributed job is already active.");
             }
@@ -266,7 +266,7 @@ public sealed class OverlordService : IAsyncDisposable
         => _accepting && Current is { Phase: OverlordPhase.Sieving } job ? job.Descriptor : null;
 
     /// <summary>Leases a slice of work, or null when none is currently available.</summary>
-    public LeaseResponse? TryLease(int? parallelism = null)
+    public LeaseResponse? TryLease(int? parallelism = null, string? jobId = null, string? paramHash = null)
     {
         if (!_accepting)
         {
@@ -278,7 +278,14 @@ public sealed class OverlordService : IAsyncDisposable
             return null;
         }
 
-        var chunkSize = _options.ResolveLeaseChunkSize(parallelism, job.Descriptor?.Sieving);
+        var descriptor = job.Descriptor;
+        if ((jobId is not null && jobId != job.JobId) ||
+            (paramHash is not null && paramHash != descriptor?.ParamHash))
+        {
+            return null;
+        }
+
+        var chunkSize = _options.ResolveLeaseChunkSize(parallelism, descriptor?.Sieving);
         return job.TryLease(_options.LeaseTtl, chunkSize);
     }
 
@@ -343,7 +350,16 @@ public sealed class OverlordService : IAsyncDisposable
             return new LeaseUploadCompleteResponse(false, "The job or lease is no longer accepting completion markers.");
         }
 
-        var response = await inbox.CompleteLeaseAsync(leaseId, chunkCount, cancellationToken).ConfigureAwait(false);
+        LeaseUploadCompleteResponse response;
+        try
+        {
+            response = await inbox.CompleteLeaseAsync(leaseId, chunkCount, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            job.CancelLeaseIngestProtection(leaseId, _options.LeaseTtl);
+            throw;
+        }
         if (!response.Accepted)
         {
             job.CancelLeaseIngestProtection(leaseId, _options.LeaseTtl);
@@ -388,8 +404,7 @@ public sealed class OverlordService : IAsyncDisposable
         try
         {
             var result = await pipeline.RunAsync(request, progress: null, cancellationToken, jobId).ConfigureAwait(false);
-            await job.CleanupInboxAsync(_options.RetainRelationInboxOnCompletion).ConfigureAwait(false);
-            job.Finish(DiscoveredFactors.From(result.Factors));
+            await ApplyPipelineResultAsync(job, result).ConfigureAwait(false);
             return result;
         }
         catch (Exception ex)
@@ -409,8 +424,7 @@ public sealed class OverlordService : IAsyncDisposable
         {
             var result = await pipeline.ResumeAsync(
                 directory, overrides: null, progress: null, cancellationToken).ConfigureAwait(false);
-            await job.CleanupInboxAsync(_options.RetainRelationInboxOnCompletion).ConfigureAwait(false);
-            job.Finish(DiscoveredFactors.From(result.Factors));
+            await ApplyPipelineResultAsync(job, result).ConfigureAwait(false);
             return result;
         }
         catch (Exception ex)
@@ -418,6 +432,32 @@ public sealed class OverlordService : IAsyncDisposable
             job.Fault($"Distributed recovery failed: {ex.Message}");
             throw;
         }
+    }
+
+    private async Task ApplyPipelineResultAsync(OverlordJob job, FactorizationJobResult result)
+    {
+        if (result.Status is JobStatus.Canceled or JobStatus.Canceling)
+        {
+            await job.CleanupInboxAsync(retain: true).ConfigureAwait(false);
+            job.MarkCanceled(result.ErrorSummary);
+            return;
+        }
+        if (result.Status == JobStatus.Failed)
+        {
+            await job.CleanupInboxAsync(retain: true).ConfigureAwait(false);
+            job.Fault(result.ErrorSummary ?? "The pipeline failed.");
+            return;
+        }
+
+        if (!IsTerminal(result.Status))
+        {
+            await job.CleanupInboxAsync(retain: true).ConfigureAwait(false);
+            job.Fault($"The pipeline returned unexpected status {result.Status}.");
+            return;
+        }
+
+        await job.CleanupInboxAsync(_options.RetainRelationInboxOnCompletion).ConfigureAwait(false);
+        job.Finish(DiscoveredFactors.From(result.Factors));
     }
 
     private void RaiseChanged() => Changed?.Invoke();

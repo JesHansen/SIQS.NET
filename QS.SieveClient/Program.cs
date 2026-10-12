@@ -58,12 +58,20 @@ while (!cts.IsCancellationRequested)
                 $"{descriptor.ACount} A-candidates, {context.Parameters.EffectiveParallelism} sieve workers).");
         }
 
-        var leasePath = $"/api/dist/lease?parallelism={context.Parameters.EffectiveParallelism}";
+        var leasePath = $"/api/dist/lease?parallelism={context.Parameters.EffectiveParallelism}" +
+                        $"&jobId={Uri.EscapeDataString(descriptor.JobId)}" +
+                        $"&paramHash={Uri.EscapeDataString(descriptor.ParamHash)}";
         var lease = await ClientHttp.GetJsonAsync<LeaseResponse>(
             http, HttpMethod.Post, leasePath, null, cts.Token);
         if (lease is null)
         {
             await Task.Delay(idleDelay, cts.Token);
+            continue;
+        }
+
+        if (lease.JobId != context.JobId)
+        {
+            context = null;
             continue;
         }
 

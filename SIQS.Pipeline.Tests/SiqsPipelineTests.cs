@@ -359,6 +359,24 @@ public class SiqsPipelineTests : IDisposable
         Assert.Contains("relation_target", ex.Message);
     }
 
+    [Theory]
+    [InlineData(1, "stored value is 1, supplied value is 2")]
+    [InlineData(null, "stored value is auto, supplied value is 2")]
+    public async Task Resume_keeps_stored_parameters_immutable(int? storedParallelism, string expected)
+    {
+        var pipeline = new SiqsPipeline(new FakePhaseExecutor());
+        var dir = RunDir($"resume-immutable-{storedParallelism?.ToString() ?? "auto"}");
+        await pipeline.RunAsync(
+            Request(91, dir) with { Sieving = new SievingRunOptions { Parallelism = storedParallelism } },
+            null, CancellationToken.None);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => pipeline.ResumeAsync(
+            dir, new FactorizationRequest(91) { Sieving = new SievingRunOptions { Parallelism = 2 } },
+            null, CancellationToken.None));
+
+        Assert.Contains($"sieving_parallelism: {expected}", ex.Message);
+    }
+
     [Fact]
     public async Task Resume_rejects_trial_sieve_jobs()
     {

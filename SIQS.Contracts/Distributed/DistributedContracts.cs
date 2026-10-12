@@ -11,23 +11,23 @@ namespace SIQS.Contracts.Distributed;
 public static class DistProtocol
 {
     /// <summary>Bump on any change to the wire DTOs or the relation/parameter encoding.</summary>
-    public const int Version = 4;
+    public const int Version = 5;
 
     /// <summary>
     /// A stable digest of every job input that must be identical on both sides for the sieve to
     /// agree (N, factor base inputs, and all relation-affecting sieving parameters, plus the protocol
-    /// version). Deliberately excludes <see cref="SievingParameterSet.Parallelism"/>, a per-client
-    /// performance knob that does not change the relation set.
+    /// version). Deliberately excludes per-client parallelism and mutable collection targets, which
+    /// do not change the identity of a polynomial or relation and may increase during top-up.
     /// </summary>
     public static string ComputeParamHash(
         int protocolVersion, string n, long factorBaseBound, string multiplier, bool allowTinyTrialDivision, SievingParameterSet s)
     {
         var canonical = string.Join('|',
             protocolVersion, n, factorBaseBound, multiplier, allowTinyTrialDivision,
-            s.SieveHalfInterval, s.PolynomialCount, s.RelationTarget, s.LargePrimeBound, s.ErrorMargin,
+            s.SieveHalfInterval, s.PolynomialCount, s.LargePrimeBound, s.ErrorMargin,
             s.OutputBatchSize, s.APrimeCount, s.APrimeWindowSize, s.SieveBlockSize, s.BucketLargePrimeCutoff,
             s.ResieveLargePrimeCutoff, s.SmallPrimeVariationBound,
-            s.TrialRawRelationTarget?.ToString() ?? "", s.EnableTwoLargePrimes,
+            s.EnableTwoLargePrimes,
             s.LargePrime2Bound, s.LargePrime2ThresholdBound, s.CofactorSplitter);
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }

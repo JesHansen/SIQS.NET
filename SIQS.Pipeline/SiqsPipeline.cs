@@ -127,19 +127,41 @@ public sealed class SiqsPipeline : ISiqsPipeline
         if (isTrialSieve)
             throw new InvalidOperationException("Trial-sieve jobs cannot be resumed because A-index checkpoint semantics do not apply.");
 
-        var resumeIndex = _resumePlanner.FindResumePoint(jobDirectory, state, storedRequest);
-        if (resumeIndex >= PhaseSequence.All.Length) return _coordinator.BuildStoredResult(state, storedRequest);
+        var plan = _resumePlanner.FindResumePoint(jobDirectory, state, storedRequest);
+        if (plan.Reason == ResumeReason.Complete) return _coordinator.BuildStoredResult(state, storedRequest);
 
         using var events = new EventLog(jobDirectory, state.JobId, progress);
-        events.Report(new SiqsProgressEvent(DateTimeOffset.UtcNow, state.JobId, SiqsPhase.Pipeline,
-            ProgressLevel.Info, $"resuming at {SiqsTokens.ToToken(PhaseSequence.All[resumeIndex])}", null,
-            new Dictionary<string, string>(), null));
-        _coordinator.ResetForResume(jobDirectory, state, resumeIndex,
-            resumeIndex == PhaseSequence.IndexOf(SiqsPhase.Sieving), events);
+        ReportResumePlan(events, state.JobId, plan);
+        _coordinator.ResetForResume(jobDirectory, state, plan.PhaseIndex, plan.KeepsSievingArtifacts, events);
         JobStateMachine.Start(state);
         _stateRepository.Save(jobDirectory, state);
-        return await _coordinator.RunAsync(jobDirectory, state, storedRequest, resumeIndex, events, cancellationToken)
+        return await _coordinator.RunAsync(jobDirectory, state, storedRequest, plan.PhaseIndex, events, cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    private static void ReportResumePlan(EventLog events, string jobId, ResumePlan plan)
+    {
+        var phase = SiqsTokens.ToToken(PhaseSequence.All[plan.PhaseIndex]);
+        var invalid = plan.Reason == ResumeReason.InvalidArtifacts;
+        var discardsSieving = !plan.KeepsSievingArtifacts
+            && plan.PhaseIndex <= PhaseSequence.IndexOf(SiqsPhase.Sieving);
+        var counters = new Dictionary<string, string>
+        {
+            ["resume_phase"] = phase,
+            ["resume_reason"] = invalid ? "invalid_artifacts" : "incomplete",
+            ["sieving_artifacts"] = discardsSieving ? "discarded" : "retained",
+        };
+        events.Report(new SiqsProgressEvent(DateTimeOffset.UtcNow, jobId, SiqsPhase.Pipeline,
+            invalid ? ProgressLevel.Warning : ProgressLevel.Info,
+            $"resuming at {phase} ({(invalid ? "artifacts failed validation" : "incomplete")}); " +
+            $"{(discardsSieving ? "discarding" : "retaining")} sieving output and checkpoints",
+            null, counters, null));
+        foreach (var issue in plan.Issues)
+        {
+            events.Report(new SiqsProgressEvent(DateTimeOffset.UtcNow, jobId, SiqsPhase.Pipeline,
+                ProgressLevel.Warning, $"resume validation: {issue.Code}: {issue.Message}", null,
+                new Dictionary<string, string>(), null));
+        }
     }
 
     private static bool IsCompleted(JobStatus status)

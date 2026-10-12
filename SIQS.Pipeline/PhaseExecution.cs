@@ -43,4 +43,12 @@ public interface IPhaseExecutor
     Task<PhaseResult> RunFilteringAsync(PhaseContext context);
     Task<PhaseResult> RunLinearAlgebraAsync(PhaseContext context);
     Task<PhaseResult> RunSquareRootAsync(PhaseContext context);
+
+    /// <summary>
+    /// Called when the pipeline discards sieve output (raw relation batches and the A-index
+    /// checkpoint) so an executor can discard any progress it tracks for that output elsewhere.
+    /// </summary>
+    void DiscardSievingProgress(string jobDirectory)
+    {
+    }
 }

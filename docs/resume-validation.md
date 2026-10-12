@@ -4,6 +4,15 @@ Resume does not trust a file merely because its text parses. Every completed pha
 the start of the pipeline, and the first phase with an invalid output is recomputed together with all
 downstream phases.
 
+Sieve output gets one extra rule. If sieving was interrupted before it completed, its raw relation
+batches and A-index checkpoint are kept and the resumed sieve continues from them. If sieving
+completed but its output fails validation, that output is not reused: the raw batches, the
+checkpoint, and (for distributed jobs) the lease journal and relation inbox are discarded together,
+so the rerun regenerates every A-range instead of trusting a checkpoint whose relations are gone.
+`events.log` records the resume phase, whether it restarted because the phase was incomplete or
+because its artifacts failed validation, whether sieve output was retained or discarded, and each
+validation issue.
+
 The deep checks below run when planning a resume. A phase that has just produced an artifact retains
 the lightweight presence, parse, dimension, and metadata validation used by normal runs; it does not
 immediately reread and re-prove its own trusted output. This keeps successful factorization wall time

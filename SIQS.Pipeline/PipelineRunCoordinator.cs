@@ -87,6 +87,21 @@ internal sealed class PipelineRunCoordinator
                     string.Join("; ", validation.Issues.Select(issue => issue.Message)), null, currentRequest);
             }
 
+            if (phase == SiqsPhase.SquareRoot && result.Factor is null
+                && UnderdeterminedShortfall(state) is { } shortfall)
+            {
+                // Only the free zero-row dependencies were tried, and none split N: that is a
+                // relation shortfall, not a finished factorization.
+                if (!TryPrepareTopUp(directory, state, phaseState, currentRequest, shortfall, events, out var toppedUp, out var failure))
+                {
+                    return failure!;
+                }
+
+                currentRequest = toppedUp!;
+                phaseIndex = PhaseSequence.IndexOf(SiqsPhase.Sieving);
+                continue;
+            }
+
             PhaseStateMachine.Complete(phaseState, stopwatch.Elapsed.TotalSeconds, result);
             foreach (var artifact in result.Artifacts)
             {
@@ -152,9 +167,9 @@ internal sealed class PipelineRunCoordinator
         terminalFailure = null;
         PhaseStateMachine.Fail(phaseState, failure.Message, new Dictionary<string, string>
         {
-            ["nonzero_rows"] = CounterFormat.Count(failure.NonZeroRows),
+            [CounterKeys.NonZeroRows] = CounterFormat.Count(failure.NonZeroRows),
             ["columns"] = CounterFormat.Count(failure.ColumnCount),
-            ["underdetermined_deficit"] = CounterFormat.Count(failure.Deficit),
+            [CounterKeys.UnderdeterminedDeficit] = CounterFormat.Count(failure.Deficit),
         });
         TopUpPlan? plan;
         try { plan = _topUp.TryPlan(state, currentRequest, failure); }
@@ -192,15 +207,20 @@ internal sealed class PipelineRunCoordinator
             new Dictionary<string, string>
             {
                 ["top_up_round"] = CounterFormat.Count(round.Round),
-                ["underdetermined_deficit"] = CounterFormat.Count(round.Deficit),
+                [CounterKeys.UnderdeterminedDeficit] = CounterFormat.Count(round.Deficit),
                 ["new_relation_target"] = CounterFormat.Count(round.NewRelationTarget),
             }, null));
         return true;
     }
 
-    private static void ResetPhasesFrom(string directory, JobState state, int startIndex, bool keepSieving, EventLog? events)
+    private void ResetPhasesFrom(string directory, JobState state, int startIndex, bool keepSieving, EventLog? events)
     {
         new JobWorkspace(directory, state.JobId).DeletePhaseArtifacts(startIndex, keepSieving, events);
+        if (!keepSieving && startIndex <= PhaseSequence.IndexOf(SiqsPhase.Sieving))
+        {
+            _executor.DiscardSievingProgress(directory);
+        }
+
         for (var i = startIndex; i < state.PhaseStates.Count; i++) PhaseStateMachine.Reset(state.PhaseStates[i]);
         state.ArtifactPaths = state.ArtifactPaths.Where(path => File.Exists(Path.Combine(directory, path)))
             .Distinct(StringComparer.Ordinal).ToList();
@@ -280,6 +300,15 @@ internal sealed class PipelineRunCoordinator
         JobStateMachine.Completed(state, JobStatus.CompletedNoFactor, null);
         _repository.Save(directory, state);
         return JobResultFactory.BuildResult(state, request, false, attempted);
+    }
+
+    private static UnderdeterminedMatrixException? UnderdeterminedShortfall(JobState state)
+    {
+        var counters = state.PhaseStates[PhaseSequence.IndexOf(SiqsPhase.LinearAlgebra)].Counters;
+        if (!counters.ContainsKey(CounterKeys.UnderdeterminedDeficit)) return null;
+        var nonZeroRows = (int)CounterFormat.ReadLong(counters, CounterKeys.NonZeroRows);
+        return new UnderdeterminedMatrixException(
+            nonZeroRows, nonZeroRows + (int)CounterFormat.ReadLong(counters, CounterKeys.UnderdeterminedDeficit));
     }
 
     private static long ReadLongCounter(PhaseState? state, string key)

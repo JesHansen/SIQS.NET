@@ -5,8 +5,9 @@ using SIQS.Contracts;
 namespace SIQS.Pipeline;
 
 /// <summary>
-/// Rejects resume overrides that conflict with a job's stored parameters: the immutable target and
-/// run directory, and any explicitly-stored parameter supplied with a different value.
+/// Enforces that a resumed job keeps its stored parameters: resume always runs the stored request,
+/// so supplied options are only checked against it. The target, run directory, and any parameter
+/// supplied with a different value, or for a parameter stored as <c>auto</c>, are conflicts.
 /// </summary>
 internal static class ResumeOverrideValidator
 {

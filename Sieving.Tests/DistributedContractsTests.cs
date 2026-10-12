@@ -32,6 +32,17 @@ public class DistributedContractsTests
         Assert.NotEqual(baseline, Hash(set with { APrimeWindowSize = set.APrimeWindowSize + 1 }));
         Assert.NotEqual(baseline, Hash(set with { SmallPrimeVariationBound = 256 }));
         Assert.Equal(baseline, Hash(set with { Parallelism = set.Parallelism + 4 }));
+        Assert.Equal(baseline, Hash(set with { RelationTarget = set.RelationTarget + 100 }));
+    }
+
+    [Fact]
+    public void Null_required_upload_members_are_format_errors()
+    {
+        var record = new RelationUploadRecord(
+            "r1", RelationKind.Partial, "p1", "1", "0", "1", 0, "1", 1,
+            new Dictionary<int, int>(), [], null!);
+
+        Assert.Throws<FormatException>(() => RelationUploadCodec.FromUploadRecord(record));
     }
 
     [Fact]

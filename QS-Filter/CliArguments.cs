@@ -10,7 +10,6 @@ internal sealed record FilteringCommand(
     string OutputDirectory,
     IReadOnlyList<string> RelationPaths,
     IReadOnlyList<string> PartialPaths,
-    int? MaxPartialsPerPrime,
     string? SpillDirectory,
     int? MaxCycleLength,
     bool EnableTwoMerge,
@@ -19,12 +18,17 @@ internal sealed record FilteringCommand(
     public static FilteringCommand Parse(string[] args)
     {
         var cli = CommandLine.Parse(args, CommandLineSyntax.Strict);
+        if (cli.GetOptional("max-partials-per-prime") is not null)
+        {
+            throw new FormatException(
+                "--max-partials-per-prime was removed; multi-pass filtering bounds memory without discarding partial relations.");
+        }
+
         return new FilteringCommand(
             cli.GetOptional("factor-base") ?? "factor_base.txt",
             cli.GetOptional("out-dir") ?? ".",
             ExpandFiles(cli.GetAll("relations")),
             ExpandFiles(cli.GetAll("partials")),
-            cli.GetInt("max-partials-per-prime"),
             cli.GetOptional("filter-spill-dir"),
             cli.GetInt("max-cycle-length"),
             cli.GetBool("enable-two-merge") ?? true,

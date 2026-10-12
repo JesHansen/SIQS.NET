@@ -21,6 +21,9 @@ public enum OverlordPhase
     /// <summary>The factorization pipeline finished (with or without a factor).</summary>
     Completed,
 
+    /// <summary>The pipeline was canceled.</summary>
+    Canceled,
+
     /// <summary>The job failed.</summary>
     Faulted,
 }
@@ -463,6 +466,19 @@ public sealed class OverlordJob
         }
 
         completion.TrySetResult(outcome);
+        RaiseChanged();
+    }
+
+    public void MarkCanceled(string? error)
+    {
+        lock (_gate)
+        {
+            _acceptingRequests = false;
+            _finishCancellation.Cancel();
+            Phase = OverlordPhase.Canceled;
+            Error = error;
+        }
+
         RaiseChanged();
     }
 

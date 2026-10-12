@@ -54,6 +54,9 @@ internal sealed class SievingCommandHandler
         {
             PolynomialCount = cli.GetLong("polynomial-count")
                 ?? SievingParameters.AvailablePolynomialSupply(parameters.APrimeWindowSize, parameters.APrimeCount),
+            // Same policy as the qs pipeline: a supplied token is authoritative and must be valid.
+            CofactorSplitter = CofactorSplitterKinds.Resolve(
+                cli.GetOptional("cofactor-splitter"), defaults.CofactorSplitter, parameters.LargePrime2Bound),
         };
         if (cli.GetLong("large-prime2-threshold-bound") is null && parameters.LargePrime2ThresholdBound > parameters.LargePrime2Bound)
         {

@@ -47,6 +47,27 @@ public sealed class RelationVerifier
     /// </summary>
     public bool TryVerify(RawRelationRecord relation, out string? error)
     {
+        var maximumInputBits = Math.Max(256L, _scaledN.GetBitLength() * 2 + 128);
+        if (relation.A.GetBitLength() > maximumInputBits ||
+            relation.B.GetBitLength() > maximumInputBits ||
+            relation.C.GetBitLength() > maximumInputBits ||
+            relation.T.GetBitLength() > maximumInputBits)
+        {
+            error = $"Relation '{relation.RelationId}' contains an integer outside the verification size limit.";
+            return false;
+        }
+
+        // Establish the maximum possible factor product before exponentiation. This both bounds the
+        // work requested by an untrusted exponent and lets impossible products stop immediately.
+        var value = relation.A * ((BigInteger)relation.X * relation.X) + 2 * relation.B * relation.X + relation.C;
+        var expectedProduct = relation.A * value;
+        var expectedMagnitude = BigInteger.Abs(expectedProduct);
+        if (expectedMagnitude.IsZero)
+        {
+            error = $"Relation '{relation.RelationId}' has a zero polynomial product.";
+            return false;
+        }
+
         // Reconstruct M = sign · ∏ p_col^e from the declared exponent map (column 0 is the -1 sign
         // column; every other column must be a real factor base prime).
         var m = BigInteger.One;
@@ -70,7 +91,18 @@ public sealed class RelationVerifier
                 return false;
             }
 
+            if (exponent >= expectedMagnitude.GetBitLength())
+            {
+                error = $"Relation '{relation.RelationId}' exponent {exponent} at column {column} cannot fit its polynomial value.";
+                return false;
+            }
+
             m *= BigInteger.Pow(prime, exponent);
+            if (BigInteger.Abs(m) > expectedMagnitude)
+            {
+                error = $"Relation '{relation.RelationId}' declared factorization exceeds its polynomial value.";
+                return false;
+            }
         }
 
         if (!TryValidateLargePrimes(relation, out var largePrimeProduct, out error))
@@ -79,11 +111,15 @@ public sealed class RelationVerifier
         }
 
         m *= largePrimeProduct;
+        if (BigInteger.Abs(m) > expectedMagnitude)
+        {
+            error = $"Relation '{relation.RelationId}' declared factorization exceeds its polynomial value.";
+            return false;
+        }
 
         // Exact provenance + smoothness: A·(A·x² + 2B·x + C) must equal the reconstructed product
         // as integers (this is the SIQS identity A·Q(x) = t² − ScaledN factored over the base).
-        var value = relation.A * ((BigInteger)relation.X * relation.X) + 2 * relation.B * relation.X + relation.C;
-        if (relation.A * value != m)
+        if (expectedProduct != m)
         {
             error = $"Relation '{relation.RelationId}' polynomial value does not match its declared factorization.";
             return false;

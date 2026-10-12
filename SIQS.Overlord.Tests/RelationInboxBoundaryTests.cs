@@ -79,6 +79,37 @@ public sealed class RelationInboxBoundaryTests : IDisposable
     }
 
     [Fact]
+    public async Task Completion_rejects_a_missing_declared_chunk_and_drain_finishes()
+    {
+        var inbox = CreateInbox(maxChunk: 8, maxBacklog: 8, maxTotal: 32);
+
+        var response = await inbox.CompleteLeaseAsync("lease-one", 1, CancellationToken.None);
+
+        Assert.False(response.Accepted);
+        inbox.Start();
+        await inbox.SealAndDrainAsync().WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public async Task Recovery_fails_an_impossible_completion_marker_instead_of_hanging()
+    {
+        var leaseDirectory = Path.Combine(_root, ".relation-inbox", "lease-one");
+        Directory.CreateDirectory(leaseDirectory);
+        await File.WriteAllTextAsync(Path.Combine(leaseDirectory, "complete.ready"), "1");
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var inbox = new DurableRelationInbox(
+            _root, 8, 8, 32,
+            (IReadOnlyCollection<RawRelationRecord> _) => (0, 0),
+            (_, success) => completion.TrySetResult(success),
+            _ => { });
+
+        inbox.Start();
+        await inbox.SealAndDrainAsync().WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.False(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)));
+    }
+
+    [Fact]
     public async Task Unknown_job_rejection_does_not_read_request_body()
     {
         await using var service = new OverlordService(_root);

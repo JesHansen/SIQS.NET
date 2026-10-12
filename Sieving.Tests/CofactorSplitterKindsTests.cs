@@ -4,6 +4,9 @@ namespace Sieving.Tests;
 
 public class CofactorSplitterKindsTests
 {
+    private const long NarrowBound = uint.MaxValue;
+    private const long WideBound = (long)uint.MaxValue + 1;
+
     [Theory]
     [InlineData(CofactorSplitterKind.Squfof, "squfof")]
     [InlineData(CofactorSplitterKind.MicroEcmSqufof, "micro-ecm-squfof")]
@@ -57,5 +60,29 @@ public class CofactorSplitterKindsTests
     public void SelectFor_picks_rho_fallback_only_above_the_64_bit_bound(long largePrime2Bound, CofactorSplitterKind expected)
     {
         Assert.Equal(expected, CofactorSplitterKinds.SelectFor(largePrime2Bound));
+    }
+
+    [Theory]
+    [InlineData(CofactorSplitterKind.Squfof, NarrowBound, CofactorSplitterKind.Squfof)]
+    [InlineData(CofactorSplitterKind.Squfof, WideBound, CofactorSplitterKind.SqufofRho)]
+    [InlineData(CofactorSplitterKind.MicroEcmSqufof, WideBound, CofactorSplitterKind.SqufofRho)]
+    [InlineData(CofactorSplitterKind.MicroEcmStage2, NarrowBound, CofactorSplitterKind.MicroEcmStage2)]
+    [InlineData(CofactorSplitterKind.MicroEcmStage2, WideBound, CofactorSplitterKind.MicroEcmStage2)]
+    [InlineData(CofactorSplitterKind.SqufofRho, WideBound, CofactorSplitterKind.SqufofRho)]
+    public void Auto_selection_keeps_the_preferred_strategy_unless_it_cannot_split_wide_residuals(
+        CofactorSplitterKind preferred, long largePrime2Bound, CofactorSplitterKind expected)
+    {
+        Assert.Equal(expected, CofactorSplitterKinds.AutoSelect(preferred, largePrime2Bound));
+        Assert.Equal(expected, CofactorSplitterKinds.Resolve(null, preferred, largePrime2Bound));
+    }
+
+    [Fact]
+    public void Supplied_tokens_override_auto_selection_and_invalid_tokens_are_rejected()
+    {
+        Assert.Equal(CofactorSplitterKind.Squfof,
+            CofactorSplitterKinds.Resolve("SQUFOF", CofactorSplitterKind.MicroEcmStage2, WideBound));
+        var error = Assert.Throws<ArgumentException>(() =>
+            CofactorSplitterKinds.Resolve("definitely-invalid", CofactorSplitterKind.Squfof, NarrowBound));
+        Assert.Contains("definitely-invalid", error.Message);
     }
 }

@@ -83,7 +83,7 @@ The final argument is the integer to factor. Press `Ctrl+C` to cancel a running 
 
 - `--quiet` prints only the factor product to stdout, for piping `qs` into a script or another tool.
 - `--debug` restores the full per-phase counter dump.
-- `--resume <run-dir>` resumes a canceled run from its saved artifacts (see `runs/` below) instead of starting over.
+- `--resume <run-dir>` resumes a canceled run from its saved artifacts (see `runs/` below) instead of starting over. The run keeps its stored parameters; options that differ from them are rejected.
 - `--parallelism 1` forces single-threaded execution, for byte-for-byte reproducible run artifacts.
 
 `qs --help` prints every option, and [docs/tuning.md](docs/tuning.md) explains what each one does and

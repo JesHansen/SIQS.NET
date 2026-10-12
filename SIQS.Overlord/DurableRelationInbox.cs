@@ -26,6 +26,7 @@ public sealed record RelationInboxSnapshot(
 /// </summary>
 internal sealed class DurableRelationInbox
 {
+    public const string DirectoryName = ".relation-inbox";
     private const string ChunkReadySuffix = ".ndjson.ready";
     private const string ChunkProcessingSuffix = ".ndjson.processing";
     // Legacy successful chunks used this suffix for the complete raw payload. Recovery replays them
@@ -95,7 +96,7 @@ internal sealed class DurableRelationInbox
                 nameof(maxInboxBytes), "The total inbox quota cannot be smaller than the backlog quota.");
         }
 
-        _root = Path.Combine(jobDirectory, ".relation-inbox");
+        _root = Path.Combine(jobDirectory, DirectoryName);
         _maxChunkBytes = maxChunkBytes;
         _ingest = ingest;
         _leaseProcessed = leaseProcessed;
@@ -281,6 +282,13 @@ internal sealed class DurableRelationInbox
                 return new LeaseUploadCompleteResponse(true, null);
             }
 
+            if (!HasEveryPublishedChunk(leaseDirectory, chunkCount))
+            {
+                TryDeleteEmptyDirectory(leaseDirectory);
+                return new LeaseUploadCompleteResponse(
+                    false, "Every declared chunk must be durably published before completing a lease.");
+            }
+
             try
             {
                 await _publisher.WriteAsync(
@@ -451,9 +459,14 @@ internal sealed class DurableRelationInbox
                 }
             }
 
-            if (!allFinished)
+            if (!allFinished && HasActiveWriters())
             {
                 continue;
+            }
+
+            if (!allFinished)
+            {
+                success = false;
             }
 
             _leaseProcessed(leaseId, success);
@@ -550,6 +563,64 @@ internal sealed class DurableRelationInbox
     private bool HasReadyWork()
         => EnumerateChunkFiles(ChunkReadySuffix).Any() ||
            Directory.EnumerateFiles(_root, CompleteReadyName, SearchOption.AllDirectories).Any();
+
+    public bool HasDurableCompletionMarker(string leaseId)
+    {
+        var leaseDirectory = LeaseDirectory(leaseId);
+        return File.Exists(Path.Combine(leaseDirectory, CompleteReadyName)) ||
+               File.Exists(Path.Combine(leaseDirectory, CompleteDoneName));
+    }
+
+    private static bool HasEveryPublishedChunk(string leaseDirectory, long chunkCount)
+    {
+        if (!Directory.Exists(leaseDirectory))
+        {
+            return chunkCount == 0;
+        }
+
+        var sequences = new HashSet<long>();
+        foreach (var path in Directory.EnumerateFiles(leaseDirectory))
+        {
+            var name = Path.GetFileName(path);
+            if (!name.EndsWith(ChunkReadySuffix, StringComparison.Ordinal) &&
+                !name.EndsWith(ChunkProcessingSuffix, StringComparison.Ordinal) &&
+                !name.EndsWith(ChunkDoneSuffix, StringComparison.Ordinal) &&
+                !name.EndsWith(ChunkFailedSuffix, StringComparison.Ordinal) &&
+                !name.EndsWith(ChunkReceiptSuffix, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var separator = name.IndexOf('.');
+            if (separator > 0 && long.TryParse(name.AsSpan(0, separator), out var sequence) && sequence >= 0)
+            {
+                sequences.Add(sequence);
+            }
+        }
+
+        if (chunkCount != sequences.Count)
+        {
+            return false;
+        }
+
+        for (var sequence = 0L; sequence < chunkCount; sequence++)
+        {
+            if (!sequences.Contains(sequence))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool HasActiveWriters()
+    {
+        lock (_gate)
+        {
+            return _activeWriters != 0;
+        }
+    }
 
     private string LeaseDirectory(string leaseId)
     {

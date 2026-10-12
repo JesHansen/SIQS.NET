@@ -70,6 +70,20 @@ public class RelationVerifierTests
     }
 
     [Fact]
+    public void Rejects_an_unbounded_exponent_without_exponentiating_it()
+    {
+        var (fb, p, result) = Sieve();
+        var verifier = VerifierFor(fb, p);
+        var genuine = result.FullRelations[0];
+        var column = genuine.FactorExponents.First(kv => kv.Key != 0).Key;
+        var exponents = genuine.FactorExponents.ToDictionary(kv => kv.Key, kv => kv.Value);
+        exponents[column] = int.MaxValue;
+
+        Assert.False(verifier.TryVerify(With(genuine, exponents: exponents), out var error));
+        Assert.Contains("cannot fit", error);
+    }
+
+    [Fact]
     public void Rejects_a_tampered_root()
     {
         var (fb, p, result) = Sieve();

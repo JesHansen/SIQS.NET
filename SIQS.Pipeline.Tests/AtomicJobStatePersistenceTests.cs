@@ -33,7 +33,11 @@ public sealed class AtomicJobStatePersistenceTests : IDisposable
 
         var recovered = new AtomicJobStatePersistence().Load(_directory);
         Assert.Equal(expectedStatus, recovered.Status);
-        Assert.Empty(TemporaryFiles());
+        if (interruptedStage is JobStateWriteStage.TemporaryFileCreated or
+            JobStateWriteStage.TemporaryFileFlushed or JobStateWriteStage.BeforePrimaryReplace)
+        {
+            Assert.NotEmpty(TemporaryFiles());
+        }
     }
 
     [Fact]
@@ -54,7 +58,7 @@ public sealed class AtomicJobStatePersistenceTests : IDisposable
 
         Assert.Equal(JobStatus.Created, recovered.Status);
         Assert.True(File.Exists(Path.Combine(_directory, JobStore.FileName)));
-        Assert.Empty(TemporaryFiles());
+        Assert.NotEmpty(TemporaryFiles());
     }
 
     [Fact]
@@ -71,14 +75,77 @@ public sealed class AtomicJobStatePersistenceTests : IDisposable
 
         Assert.Equal(JobStatus.Created, recovered.Status);
         Assert.Equal(JobStatus.Created, repeated.Status);
-        Assert.Empty(TemporaryFiles());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Reader_during_temporary_file_flush_does_not_break_active_writer(bool hasPrimary)
+    {
+        Directory.CreateDirectory(_directory);
+        if (hasPrimary)
+        {
+            new AtomicJobStatePersistence().Write(_directory, State(JobStatus.Created));
+        }
+
+        var writer = new AtomicJobStatePersistence(stage =>
+        {
+            if (stage == JobStateWriteStage.TemporaryFileFlushed)
+            {
+                _ = new AtomicJobStatePersistence().Load(_directory);
+            }
+        });
+
+        writer.Write(_directory, State(JobStatus.Running));
+
+        Assert.Equal(JobStatus.Running, new AtomicJobStatePersistence().Load(_directory).Status);
+    }
+
+    [Fact]
+    public void Snapshot_read_does_not_delete_pending_publication()
+    {
+        Directory.CreateDirectory(_directory);
+        new AtomicJobStatePersistence().Write(_directory, State(JobStatus.Created));
+        var observed = new List<JobStatus>();
+        var writer = new AtomicJobStatePersistence(stage =>
+        {
+            if (stage == JobStateWriteStage.BeforePrimaryReplace)
+            {
+                observed.Add(JobStore.LoadSnapshot(_directory).Status);
+            }
+        });
+
+        writer.Write(_directory, State(JobStatus.Running));
+
+        Assert.Equal([JobStatus.Created], observed);
+        Assert.Equal(JobStatus.Running, JobStore.Load(_directory).Status);
+    }
+
+    [Fact]
+    public void Write_does_not_delete_another_writers_pending_publication()
+    {
+        Directory.CreateDirectory(_directory);
+        new AtomicJobStatePersistence().Write(_directory, State(JobStatus.Created));
+        var concurrentWriter = new AtomicJobStatePersistence(stage =>
+        {
+            if (stage == JobStateWriteStage.BeforePrimaryReplace)
+            {
+                new AtomicJobStatePersistence().Write(_directory, State(JobStatus.Running));
+            }
+        });
+
+        concurrentWriter.Write(_directory, State(JobStatus.CompletedFactorFound));
+
+        Assert.Equal(JobStatus.CompletedFactorFound, JobStore.Load(_directory).Status);
     }
 
     [Fact]
     public void Repeated_writes_clean_orphaned_temporary_files()
     {
         Directory.CreateDirectory(_directory);
-        File.WriteAllText(Path.Combine(_directory, $"{JobStore.FileName}.{Guid.NewGuid():N}.tmp"), "partial");
+        var orphan = Path.Combine(_directory, $"{JobStore.FileName}.{Guid.NewGuid():N}.tmp");
+        File.WriteAllText(orphan, "partial");
+        File.SetLastWriteTimeUtc(orphan, DateTime.UtcNow - AtomicJobStatePersistence.OrphanAge - TimeSpan.FromMinutes(1));
         var persistence = new AtomicJobStatePersistence();
 
         persistence.Write(_directory, State(JobStatus.Created));

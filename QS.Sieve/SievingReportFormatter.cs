@@ -1,4 +1,5 @@
 using SIQS.Contracts;
+using Sieving;
 
 namespace QsSieve;
 
@@ -17,7 +18,7 @@ internal static class SievingReportFormatter
         if (parameters.EnableTwoLargePrimes)
         {
             Console.WriteLine($"  [large primes]1LP={counters.OneLargePrimePartials}, 2LP={counters.TwoLargePrimePartials}, 2LP split={counters.TwoLargePrimeSplitSuccesses}/{counters.TwoLargePrimeSplitAttempts}");
-            Console.WriteLine($"  [lp2 bounds]  relation={parameters.LargePrime2Bound}, threshold={parameters.LargePrime2ThresholdBound}");
+            Console.WriteLine($"  [lp2 bounds]  relation={parameters.LargePrime2Bound}, threshold={parameters.LargePrime2ThresholdBound}, splitter={parameters.CofactorSplitter.ToToken()}");
         }
 
         if (counters.TrialRawRelationTarget is not { } target || counters.RawRelations <= 0)

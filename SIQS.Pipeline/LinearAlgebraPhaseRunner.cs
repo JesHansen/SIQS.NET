@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using SIQS.Contracts;
 using SIQS.Contracts.Files;
 using LinearAlgebra;
@@ -20,18 +21,23 @@ internal sealed class LinearAlgebraPhaseRunner
         var relationRows = rows.Select(r => RelationRow.FromColumns(r.Columns)).ToArray();
         var zeroRowCount = relationRows.Count(r => r.Count == 0);
         var nonZeroRowCount = relationRows.Length - zeroRowCount;
-        if (nonZeroRowCount < meta.ColumnCount)
+        var underdetermined = nonZeroRowCount < meta.ColumnCount;
+        if (underdetermined && zeroRowCount == 0)
         {
             throw new UnderdeterminedMatrixException(nonZeroRowCount, meta.ColumnCount);
         }
 
-        var solve = BlockLanczos.Solve(
-            relationRows,
-            meta.ColumnCount,
-            maxDependencies,
-            linalgOptions,
-            PhaseArtifactStore.LinearAlgebraProgressBridge.For(context),
-            context.CancellationToken);
+        // Zero rows are dependencies that need no solve. When the nonzero rows are too few to justify
+        // a Lanczos run, square root still tries these first; if none splits N the pipeline tops up.
+        var solve = underdetermined
+            ? ZeroRowDependencies(relationRows, maxDependencies)
+            : BlockLanczos.Solve(
+                relationRows,
+                meta.ColumnCount,
+                maxDependencies,
+                linalgOptions,
+                PhaseArtifactStore.LinearAlgebraProgressBridge.For(context),
+                context.CancellationToken);
         if (solve.Dependencies.Count == 0)
         {
             throw new InvalidOperationException($"Block Lanczos recovered no verified dependencies after {solve.LanczosRuns} run(s).");
@@ -43,8 +49,7 @@ internal sealed class LinearAlgebraPhaseRunner
             .ToArray();
         var doc = new DependenciesDocument(meta.TargetN, meta.Multiplier, meta.ScaledN, meta.RowCount, meta.ColumnCount, deps);
         PhaseArtifactStore.Write(context, "dependencies.txt", DependenciesFile.Write(doc));
-        return PhaseResult.Completed(SiqsPhase.LinearAlgebra, new[] { "dependencies.txt" },
-            new Dictionary<string, string>
+        var counters = new Dictionary<string, string>
             {
                 ["solver"] = solve.Solver,
                 ["lanczos_runs"] = solve.LanczosRuns.ToString(),
@@ -56,8 +61,25 @@ internal sealed class LinearAlgebraPhaseRunner
                 ["linalg_parallelism_requested"] = linalgParallelism.ToString(),
                 ["linalg_parallelism"] = linalgOptions.EffectiveParallelism.ToString(),
                 ["zero_rows"] = zeroRowCount.ToString(),
-                ["nonzero_rows"] = nonZeroRowCount.ToString(),
+                [CounterKeys.NonZeroRows] = nonZeroRowCount.ToString(),
                 ["nonzero_row_surplus"] = (nonZeroRowCount - meta.ColumnCount).ToString(),
-            });
+            };
+        if (underdetermined)
+        {
+            counters[CounterKeys.UnderdeterminedDeficit] = (meta.ColumnCount - nonZeroRowCount).ToString();
+        }
+
+        return PhaseResult.Completed(SiqsPhase.LinearAlgebra, new[] { "dependencies.txt" }, counters);
     }, context.CancellationToken);
+
+    private static SolveResult ZeroRowDependencies(IReadOnlyList<RelationRow> rows, int maxDependencies)
+        => new(
+            rows.Index()
+                .Where(row => row.Item.Count == 0)
+                .Take(Math.Max(0, maxDependencies))
+                .Select(row => new Dependency(ImmutableArray.Create(row.Index)))
+                .ToArray(),
+            Pivots: 0,
+            Solver: "zero-rows",
+            StopReason: "underdetermined-zero-rows-only");
 }

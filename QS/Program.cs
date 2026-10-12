@@ -20,7 +20,8 @@ Output
 Run control
   --n <number>                    the number to factor, as an alternative to the positional form
   --run-dir <path>                write run artifacts here instead of runs/<jobId>
-  --resume <run-dir>              resume a canceled run from its saved artifacts
+  --resume <run-dir>              resume a canceled run with its stored parameters; options passed
+                                  with it must match them
   --trial-sieve-percent <p>       stop after p% of the relation target, for timing runs
 
 Factor base

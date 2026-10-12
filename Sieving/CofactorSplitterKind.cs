@@ -45,6 +45,41 @@ public static class CofactorSplitterKinds
             ? CofactorSplitterKind.Squfof
             : CofactorSplitterKind.SqufofRho;
 
+    /// <summary>
+    /// True when the strategy ends in Pollard's rho, the only splitter that handles residuals wider
+    /// than 64 bits.
+    /// </summary>
+    public static bool SplitsWideResiduals(this CofactorSplitterKind kind)
+        => kind is CofactorSplitterKind.SqufofRho or CofactorSplitterKind.MicroEcmStage2;
+
+    /// <summary>
+    /// The effective strategy when none is chosen explicitly: keeps the size-tuned
+    /// <paramref name="preferred"/> default whenever it can split every residual the LP2 bound
+    /// admits, and widens to <see cref="SelectFor"/> otherwise. An explicit choice bypasses this.
+    /// </summary>
+    public static CofactorSplitterKind AutoSelect(CofactorSplitterKind preferred, long largePrime2Bound)
+        => preferred.SplitsWideResiduals() || SelectFor(largePrime2Bound) == CofactorSplitterKind.Squfof
+            ? preferred
+            : SelectFor(largePrime2Bound);
+
+    /// <summary>
+    /// Resolves an optional CLI/persisted token against the size-tuned default and the effective LP2
+    /// bound. A supplied token must be valid and is authoritative.
+    /// </summary>
+    public static CofactorSplitterKind Resolve(string? token, CofactorSplitterKind preferred, long largePrime2Bound)
+    {
+        if (token is null)
+        {
+            return AutoSelect(preferred, largePrime2Bound);
+        }
+
+        return TryParse(token, out var kind)
+            ? kind
+            : throw new ArgumentException(
+                $"Unknown cofactor splitter '{token}'. Expected squfof, squfof-rho, micro-ecm-squfof, or micro-ecm-stage2.",
+                nameof(token));
+    }
+
     public static bool TryParse(string? token, out CofactorSplitterKind kind)
     {
         switch (token?.Trim().ToLowerInvariant())

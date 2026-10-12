@@ -26,6 +26,15 @@ public static class CounterKeys
     /// <summary>Number of dependencies the square-root phase attempted; read into the job result.</summary>
     public const string DependenciesAttempted = "dependencies_attempted";
 
+    /// <summary>Nonzero matrix rows given to linear algebra; read when planning a top-up.</summary>
+    public const string NonZeroRows = "nonzero_rows";
+
+    /// <summary>
+    /// Columns minus nonzero rows, set when linear algebra could offer only zero-row dependencies;
+    /// read to top up instead of finishing when none of them splits N.
+    /// </summary>
+    public const string UnderdeterminedDeficit = "underdetermined_deficit";
+
     /// <summary>Wall-clock seconds for a phase or progress step; read by the UI timeline.</summary>
     public const string ElapsedSeconds = "elapsed_seconds";
 }

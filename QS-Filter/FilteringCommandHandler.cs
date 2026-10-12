@@ -31,7 +31,6 @@ internal sealed class FilteringCommandHandler
         Directory.CreateDirectory(command.OutputDirectory);
 
         var options = new FilteringOptions(
-            MaxPartialsPerPrime: command.MaxPartialsPerPrime,
             LargePrimeBound: partialMetadata?.LargePrimeBound,
             LargePrime2Bound: partialMetadata?.LargePrime2Bound,
             SpillDirectory: command.SpillDirectory,

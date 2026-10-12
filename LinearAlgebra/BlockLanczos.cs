@@ -103,68 +103,66 @@ public static class BlockLanczos
                 0,
                 matrix.SparseParityColumnCount,
                 TimeSpan.Zero));
-            if (BlockLanczosRecurrence.TrySolveOnce(
+            var converged = BlockLanczosRecurrence.TrySolveOnce(
                 matrix, retry, options.Seed, runWatch, progress, cancellationToken,
-                out var candidateBlock, out var dimensionsSolved))
+                out var candidateBlock, out var dimensionsSolved);
+            runWatch.Stop();
+            telemetry.RecordRun(runWatch.Elapsed, converged ? dimensionsSolved : 0);
+            progress?.Report(new BlockLanczosProgress(
+                "extracting",
+                run,
+                0,
+                dimensionsSolved,
+                matrix.SparseParityColumnCount,
+                runWatch.Elapsed));
+            var extracted = BlockLanczosDependencyExtractor.ExtractVerified(
+                nonZeroRows, columnCount, candidateBlock,
+                remainingDependencyBudget - telemetry.VerifiedDependencies, cancellationToken);
+            telemetry.RecordCandidates(extracted.Count);
+            var acceptedBeforeExtraction = dependencies.Count;
+            foreach (var dependency in extracted)
             {
-                runWatch.Stop();
-                telemetry.RecordRun(runWatch.Elapsed, dimensionsSolved);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!matrix.DenseRowsAreZero(dependency.RowIds))
+                {
+                    continue;
+                }
+
+                var mapped = dependency.MapThrough(originalRowIds);
+                if (seen.Add(mapped))
+                {
+                    dependencies.Add(mapped);
+                    telemetry.RecordVerifiedDependency();
+                    if (telemetry.VerifiedDependencies >= remainingDependencyBudget)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            progress?.Report(new BlockLanczosProgress(
+                dependencies.Count > acceptedBeforeExtraction ? "dependencies-found" : "no-dependencies",
+                run,
+                dependencies.Count - acceptedBeforeExtraction,
+                dimensionsSolved,
+                matrix.SparseParityColumnCount,
+                runWatch.Elapsed));
+
+            if (dependencies.Count > acceptedBeforeExtraction)
+            {
                 progress?.Report(new BlockLanczosProgress(
-                    "extracting",
+                    "run-complete",
                     run,
                     0,
                     dimensionsSolved,
                     matrix.SparseParityColumnCount,
                     runWatch.Elapsed));
-                var extracted = BlockLanczosDependencyExtractor.ExtractVerified(
-                    nonZeroRows, columnCount, candidateBlock,
-                    remainingDependencyBudget - telemetry.VerifiedDependencies, cancellationToken);
-                telemetry.RecordCandidates(extracted.Count);
-                var acceptedBeforeExtraction = dependencies.Count;
-                foreach (var dependency in extracted)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    if (!matrix.DenseRowsAreZero(dependency.RowIds))
-                    {
-                        continue;
-                    }
-
-                    var mapped = dependency.MapThrough(originalRowIds);
-                    if (seen.Add(mapped))
-                    {
-                        dependencies.Add(mapped);
-                        telemetry.RecordVerifiedDependency();
-                        if (telemetry.VerifiedDependencies >= remainingDependencyBudget)
-                        {
-                            break;
-                        }
-                    }
-                }
-
-                progress?.Report(new BlockLanczosProgress(
-                    dependencies.Count > acceptedBeforeExtraction ? "dependencies-found" : "no-dependencies",
-                    run,
-                    dependencies.Count - acceptedBeforeExtraction,
-                    dimensionsSolved,
-                    matrix.SparseParityColumnCount,
-                    runWatch.Elapsed));
-
-                if (dependencies.Count > acceptedBeforeExtraction)
-                {
-                    progress?.Report(new BlockLanczosProgress(
-                        "run-complete",
-                        run,
-                        0,
-                        dimensionsSolved,
-                        matrix.SparseParityColumnCount,
-                        runWatch.Elapsed));
-                    return telemetry.Result(dependencies, dimensionsSolved, "successful-block");
-                }
+                return telemetry.Result(
+                    dependencies, dimensionsSolved, converged ? "successful-block" : "breakdown-recovered");
             }
-            else
+
+            if (!converged)
             {
-                runWatch.Stop();
-                telemetry.RecordRun(runWatch.Elapsed, dimensionsSolved: 0);
                 progress?.Report(new BlockLanczosProgress(
                     "run-failed",
                     run,
@@ -187,6 +185,10 @@ internal static class BlockLanczosRecurrence
     private const long ProgressIntervalMilliseconds = 10_000;
     private const int ParallelVectorThreshold = 8192;
 
+    /// <summary>
+    /// Runs one seeded recurrence. Returns whether it converged; <paramref name="candidateBlock"/> is
+    /// populated either way so a breakdown can still yield verified dependencies.
+    /// </summary>
     internal static bool TrySolveOnce(
         BlockLanczosSparseMatrix matrix,
         int retry,
@@ -347,12 +349,10 @@ internal static class BlockLanczosRecurrence
             dim1 = dim0;
         }
 
-        if (dim0 == 0)
-        {
-            candidateBlock = Array.Empty<ulong>();
-            return false;
-        }
-
+        // A breakdown (dim0 == 0) - for example a nonzero matrix whose Gram operator A^T*A is
+        // identically zero - still leaves x and v[0] as usable candidates: the combiner works from
+        // their true products with A, and every extracted dependency is re-verified against the
+        // original rows. Postprocessing costs two sparse multiplies, so it is always attempted.
         var sparseProductLength = matrix.SparseParityColumnCount;
         var denseProductLength = matrix.DenseParityColumns.Count;
         var fullProductLength = sparseProductLength + denseProductLength;
@@ -365,7 +365,7 @@ internal static class BlockLanczosRecurrence
         cancellationToken.ThrowIfCancellationRequested();
         candidateBlock = BlockLanczosCandidateCombiner.Combine(
             matrix.RelationCount, fullProductLength, x, v[0], ax, av, cancellationToken);
-        return true;
+        return dim0 != 0;
     }
 
     /// <summary>

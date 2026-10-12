@@ -46,6 +46,20 @@ public sealed class DistributedSievingPhaseExecutor : IPhaseExecutor
     public Task<PhaseResult> RunLinearAlgebraAsync(PhaseContext context) => _inner.RunLinearAlgebraAsync(context);
     public Task<PhaseResult> RunSquareRootAsync(PhaseContext context) => _inner.RunSquareRootAsync(context);
 
+    /// <summary>
+    /// The lease journal and relation inbox record which A-ranges already contributed relations. When
+    /// the pipeline discards those relations, both must go too, or the rerun would never lease the
+    /// ranges again. The descriptor stays: the job's polynomial domain is unchanged.
+    /// </summary>
+    public void DiscardSievingProgress(string jobDirectory)
+    {
+        foreach (var name in new[] { LeaseJournal.DirectoryName, DurableRelationInbox.DirectoryName })
+        {
+            var path = Path.Combine(jobDirectory, name);
+            if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
+        }
+    }
+
     public async Task<PhaseResult> RunSievingAsync(PhaseContext context)
     {
         var factorBase = FactorBaseFile.Parse(File.ReadAllText(Path.Combine(context.JobDirectory, "factor_base.txt")));
@@ -62,6 +76,7 @@ public sealed class DistributedSievingPhaseExecutor : IPhaseExecutor
 
         var verifier = new RelationVerifier(
             factorBase, parameters.LargePrimeBound, parameters.EnableTwoLargePrimes ? parameters.LargePrime2Bound : null);
+        RawBatchRecovery.RepairTails(context.JobDirectory, context.Progress);
         var sink = new RawRelationBatchFileSink(context.JobDirectory, metadata, parameters.OutputBatchSize);
         var ingest = new RelationIngest(verifier, sink, ReadExistingRelations(context.JobDirectory));
         var descriptor = BuildDescriptor(_job.JobId, factorBase, parameters, aCount);
@@ -75,6 +90,7 @@ public sealed class DistributedSievingPhaseExecutor : IPhaseExecutor
             _job.IngestDurableChunk,
             _job.CompleteDurableLease,
             exception => _job.Fault($"Relation inbox failed: {exception.Message}"));
+        ledger.ReconcilePendingIngest(inbox.HasDurableCompletionMarker);
 
         // Use the Overlord job id (also the run-directory name) so the descriptor, leases, and uploads
         // all share one id; the pipeline's internal job id in job.json is an implementation detail.
